@@ -1,0 +1,71 @@
+# =============================================================================
+# AWS App Runner Configuration
+# =============================================================================
+# This file configures the AWS App Runner service deployment
+# https://docs.aws.amazon.com/apprunner/latest/dg/config-file.html
+
+version: 1.0
+runtime: python311
+
+# Build configuration
+build:
+  commands:
+    build:
+      - echo "Building anomaly detection API service..."
+      - pip install -r requirements.txt
+      - echo "Build completed successfully"
+
+# Runtime configuration
+run:
+  runtime-version: 3.11
+  command: python app.py
+  network:
+    port: 8000
+  env:
+    # Server configuration (loaded from App Runner environment variables)
+    - name: API_HOST
+      value: 0.0.0.0
+    - name: API_PORT
+      value: 8000
+    # Python configuration
+    - name: PYTHONUNBUFFERED
+      value: 1
+  # Environment secrets should be configured in AWS App Runner console or CLI:
+  # - FR24_API_TOKEN
+  # - OPENAI_API_KEY
+  # - GEMINI_API_KEY
+  # - POSTGRES_DSN
+  # - AVIATION_EDGE_API_KEY
+  # - PG_POOL_MIN_CONNECTIONS (optional, default: 2)
+  # - PG_POOL_MAX_CONNECTIONS (optional, default: 10)
+  # - PG_CONNECT_TIMEOUT (optional, default: 10)
+  # - PG_STATEMENT_TIMEOUT (optional, default: 30000)
+
+# Health check configuration
+health-check:
+  protocol: http
+  path: /api/health
+  interval: 30
+  timeout: 10
+  healthy-threshold: 1
+  unhealthy-threshold: 3
+
+# Instance configuration
+instance-configuration:
+  cpu: 4 vCPU    # Options: 0.25, 0.5, 1, 2, 4 vCPU
+  memory: 16 GB   # Options: 0.5, 1, 2, 3, 4, 6, 8, 10, 12 GB
+  # Adjust based on your traffic:
+  # - Development/Testing: 1 vCPU, 2 GB
+  # - Production (low traffic): 1 vCPU, 2 GB
+  # - Production (medium traffic): 2 vCPU, 4 GB
+  # - Production (high traffic): 4 vCPU, 8 GB
+
+# Auto-scaling configuration
+auto-scaling-configuration:
+  min-size: 1    # Minimum number of instances
+  max-size: 5    # Maximum number of instances
+  # Adjust based on your needs:
+  # - Development: min=1, max=1
+  # - Production (low): min=1, max=3
+  # - Production (medium): min=2, max=5
+  # - Production (high): min=3, max=10

@@ -1,0 +1,123 @@
+{
+  "emergency_squawks": ["7500", "7600", "7700"],
+  "airports": [
+    { "code": "LLBG", "name": "Ben Gurion Intl", "lat": 32.011389, "lon": 34.886667, "elevation_ft": 135 },
+    { "code": "LLER", "name": "Ramon Intl", "lat": 29.723704, "lon": 35.01145, "elevation_ft": 648 },
+    { "code": "LLHA", "name": "Haifa", "lat": 32.809444, "lon": 35.043056, "elevation_ft": 28 },
+    { "code": "LLBS", "name": "Beersheba", "lat": 31.287, "lon": 34.723, "elevation_ft": 886 },
+    { "code": "LLOV", "name": "Ovda", "lat": 29.940, "lon": 34.935, "elevation_ft": 1492 },
+    { "code": "LLNV", "name": "Nevatim AFB", "lat": 31.207, "lon": 35.012, "elevation_ft": 1312 },
+    { "code": "LLMG", "name": "Megiddo", "lat": 32.597, "lon": 35.228, "elevation_ft": 217 },
+    { "code": "LLHZ", "name": "Herzliya", "lat": 32.186, "lon": 34.835, "elevation_ft": 121 },
+    { "code": "LLSD", "name": "Sde Dov", "lat": 32.1147, "lon": 34.7822, "elevation_ft": 43 },
+
+    { "code": "LCRA", "name": "RAF Akrotiri (Cyprus)", "lat": 34.5900, "lon": 32.9870, "elevation_ft": 76 },
+    { "code": "LCLK", "name": "Larnaca Intl (Cyprus)", "lat": 34.8751, "lon": 33.6249, "elevation_ft": 8 },
+
+    { "code": "OLBA", "name": "Beirut Rafic Hariri Intl", "lat": 33.820889, "lon": 35.488389, "elevation_ft": 89 },
+    { "code": "OLKA", "name": "Rayak Air Base", "lat": 33.850, "lon": 35.987, "elevation_ft": 2953 },
+
+    { "code": "OJAI", "name": "Queen Alia Intl (Amman)", "lat": 31.722556, "lon": 35.993214, "elevation_ft": 2395 },
+    { "code": "OJAM", "name": "Amman Civil Airport (Marka)", "lat": 31.9697, "lon": 35.9917, "elevation_ft": 2555 },
+    { "code": "OJAQ", "name": "King Hussein Intl (Aqaba)", "lat": 29.611, "lon": 35.018, "elevation_ft": 170 },
+    { "code": "OJMF", "name": "Mafraq Air Base", "lat": 32.356, "lon": 36.259, "elevation_ft": 2240 },
+
+    { "code": "HEGR", "name": "El Gora Airport", "lat": 31.0686, "lon": 34.1296, "elevation_ft": 295 },
+    { "code": "HEAR", "name": "El Arish Intl", "lat": 31.0733, "lon": 33.8358, "elevation_ft": 121 },
+    { "code": "HECA", "name": "Cairo Intl", "lat": 30.1219, "lon": 31.4056, "elevation_ft": 382 },
+    { "code": "HEGN", "name": "Hurghada Intl", "lat": 27.1783, "lon": 33.7994, "elevation_ft": 52 },
+    { "code": "HESH", "name": "Sharm El-Sheikh Intl", "lat": 27.9773, "lon": 34.3950, "elevation_ft": 143 },
+
+    { "code": "OSDI", "name": "Damascus Intl", "lat": 33.411, "lon": 36.516, "elevation_ft": 2020 },
+    { "code": "OSLK", "name": "Latakia (Bassel Al-Assad)", "lat": 35.4011, "lon": 35.9487, "elevation_ft": 157 },
+
+    { "code": "LTFM", "name": "Istanbul Ataturk", "lat": 41.2753, "lon": 28.7519, "elevation_ft": 163 },
+    { "code": "LGAV", "name": "Athens Intl", "lat": 37.9364, "lon": 23.9445, "elevation_ft": 308 },
+
+    { "code": "OMDB", "name": "Dubai Intl", "lat": 25.2528, "lon": 55.3644, "elevation_ft": 62 },
+    { "code": "OMAA", "name": "Abu Dhabi Intl", "lat": 24.4330, "lon": 54.6511, "elevation_ft": 88 },
+    { "code": "OERK", "name": "Riyadh King Khalid Intl", "lat": 24.9576, "lon": 46.6988, "elevation_ft": 2049 },
+    { "code": "OTHH", "name": "Doha Hamad Intl", "lat": 25.2731, "lon": 51.6081, "elevation_ft": 13 }
+]
+,
+  "rules": {
+    "altitude_change": {
+      "delta_ft": 4000,
+      "window_seconds": 60,
+      "min_cruise_ft": 10000
+    },
+    "abrupt_turn": {
+      "heading_change_deg": 160,
+      "window_seconds": 90,
+      "min_speed_kts": 200,
+      "min_ft": 2000,
+      "accumulated_turn_deg": 270,
+      "accumulation_window_seconds": 900
+    },
+    "proximity": {
+      "distance_nm": 4,
+      "altitude_ft": 999,
+      "time_window_seconds": 7,
+      "airport_exclusion_nm": 4
+    },
+    "route_deviation": {
+      "cross_track_nm": 10
+    },
+    "go_around": {
+      "radius_nm": 6,
+      "min_low_alt_ft": 1500,
+      "recovery_ft": 800
+    },
+    "return_to_field": {
+      "near_airport_nm": 10,
+      "takeoff_alt_ft": 750,
+      "landing_alt_ft": 800,
+      "time_limit_seconds": 600,
+      "min_outbound_nm": 3,
+      "min_elapsed_seconds": 120
+    },
+    "diversion": {
+      "near_airport_nm": 10
+    },
+    "low_altitude": {
+      "threshold_ft": 800,
+      "airport_radius_nm": 12
+    },
+    "signal_loss": {
+      "gap_seconds": 180,
+      "repeat_count": 2
+    },
+    "path_learning": {
+      "paths_file": "rules/path_library_v2.json",
+      "heatmap_file": "rules/flight_heatmap_v2.npy",
+      "num_samples": 120,
+      "primary_radius_nm": 8.0,
+      "secondary_radius_nm": 15.0,
+      "heatmap_cell_deg": 0.05,
+      "heatmap_threshold": 5,
+      "min_off_course_points": 15,
+      "emerging_distance_nm": 12.0,
+      "emerging_bucket_size": 5,
+      "emerging_similarity_deg": 30,
+      "default_width_nm": 8.0
+    },
+    "unplanned_israel_landing": {
+      "near_airport_nm": 5
+    },
+    "learned_behavior": {
+      "paths_file": "rules/learned_paths.json",
+      "turns_file": "rules/learned_turns.json",
+      "sid_file": "rules/learned_sid.json",
+      "star_file": "rules/learned_star.json",
+      "turn_zone_tolerance_nm": 3.0,
+      "sid_star_tolerance_nm": 10,
+      "turn_angle_min_deg": 180,
+      "turn_angle_max_deg": 300
+    },
+    "military_aircraft": {
+      "enabled": true,
+      "description": "Detects military aircraft by callsign and registration patterns"
+    }
+  }
+}
+

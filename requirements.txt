@@ -1,0 +1,65 @@
+# =============================================================================
+# Python Dependencies for Anomaly Detection API Service
+# =============================================================================
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+fastapi>=0.109.0,<0.110.0
+uvicorn[standard]>=0.27.0,<0.28.0
+pydantic>=2.5.0,<3.0.0
+
+# CORS Middleware
+python-multipart>=0.0.6
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Database
+psycopg2-binary>=2.9.0,<3.0.0
+
+# AI/ML Libraries
+openai>=1.10.0,<2.0.0
+google-genai>=0.2.0,<1.0.0
+torch>=2.1.0,<3.0.0
+numpy>=1.24.0,<2.0.0
+scikit-learn>=1.3.0,<2.0.0
+
+# Flight Data APIs
+fr24sdk>=0.1.0
+xgboost==3.1.2
+
+# HTTP Client
+requests>=2.31.0,<3.0.0
+httpx>=0.26.0,<1.0.0
+
+# Data Processing
+pandas>=2.1.0,<3.0.0
+dataclasses-json>=0.6.0,<1.0.0
+
+# Map Generation
+staticmap>=0.5.7
+Pillow>=10.2.0,<11.0.0
+
+# Date/Time
+python-dateutil>=2.8.0
+
+# Logging
+colorlog>=6.8.0
+
+# Async Support
+aiofiles>=23.2.0
+
+# JSON Processing
+orjson>=3.9.0,<4.0.0
+
+# System Utilities
+psutil>=5.9.0
+
+# Mathematical Operations
+scipy>=1.11.0,<2.0.0
+
+# Geospatial
+geopy>=2.4.0
+
+# Configuration
+pyyaml>=6.0.0

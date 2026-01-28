@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-01-08T18:26:21.714706Z",
+  "parameters": {
+    "min_turn_deg": 180.0,
+    "max_turn_deg": 300.0,
+    "cluster_eps_nm": 3.0
+  },
+  "total_zones": 0,
+  "zones": []
+}

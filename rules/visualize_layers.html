@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Rules Visualization</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        #sidebar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            background-color: rgba(30, 30, 30, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            max-height: 90vh;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            border: 1px solid #333;
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+
+        .layer-control {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+        }
+
+        .layer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .layer-title {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .count-badge {
+            background-color: #333;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        /* Toggles */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #2196F3;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(14px);
+        }
+
+        #status {
+            font-size: 0.8rem;
+            margin-top: 10px;
+            color: #aaa;
+        }
+        
+        .error { color: #ff6b6b; }
+        .success { color: #51cf66; }
+
+        .popup-content h4 { margin: 0 0 5px 0; color: #333; }
+        .popup-content p { margin: 2px 0; color: #666; font-size: 0.9em; }
+        .leaflet-popup-content-wrapper { border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div id="sidebar">
+        <h2>Layers</h2>
+        
+        <div class="layer-control">
+            <div class="layer-header">
+                <span class="layer-title">
+                    <span class="legend-color" style="background: #4CAF50;"></span>
+                    Flight Paths
+                </span>
+                <label class="switch">
+                    <input type="checkbox" checked onchange="toggleLayer('paths', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <span id="count-paths" class="count-badge">0 items</span>
+        </div>
+
+        <div class="layer-control">
+            <div class="layer-header">
+                <span class="layer-title">
+                    <span class="legend-color" style="background: #FF9800;"></span>
+                    Turn Zones
+                </span>
+                <label class="switch">
+                    <input type="checkbox" checked onchange="toggleLayer('turns', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <span id="count-turns" class="count-badge">0 items</span>
+        </div>
+
+        <div class="layer-control">
+            <div class="layer-header">
+                <span class="layer-title">
+                    <span class="legend-color" style="background: #2196F3;"></span>
+                    SID Procedures
+                </span>
+                <label class="switch">
+                    <input type="checkbox" checked onchange="toggleLayer('sids', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <span id="count-sids" class="count-badge">0 items</span>
+        </div>
+
+        <div class="layer-control">
+            <div class="layer-header">
+                <span class="layer-title">
+                    <span class="legend-color" style="background: #E91E63;"></span>
+                    STAR Procedures
+                </span>
+                <label class="switch">
+                    <input type="checkbox" checked onchange="toggleLayer('stars', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <span id="count-stars" class="count-badge">0 items</span>
+        </div>
+
+        <div id="status">Loading data...</div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // Initialize Map
+        const map = L.map('map', {
+            zoomControl: false,
+            center: [33.0, 35.5], // Center on region
+            zoom: 8
+        });
+
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // Dark Basemap
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // Layer Groups
+        const layerGroups = {
+            paths: L.featureGroup().addTo(map),
+            turns: L.featureGroup().addTo(map),
+            sids: L.featureGroup().addTo(map),
+            stars: L.featureGroup().addTo(map)
+        };
+
+        const statusEl = document.getElementById('status');
+
+        function updateStatus(msg, type='info') {
+            statusEl.textContent = msg;
+            statusEl.className = type;
+            console.log(`[${type.toUpperCase()}] ${msg}`);
+        }
+
+        // Fetch and process data
+        async function loadLayers() {
+            try {
+                // 1. Load Paths
+                await loadLayer('learned_paths.json', 'paths', processPaths, '#4CAF50');
+                
+                // 2. Load Turns
+                await loadLayer('learned_turns.json', 'turns', processTurns, '#FF9800');
+                
+                // 3. Load SID
+                await loadLayer('learned_sid.json', 'sids', processProcedures, '#2196F3');
+                
+                // 4. Load STAR
+                await loadLayer('learned_star.json', 'stars', processProcedures, '#E91E63');
+                
+                updateStatus('All layers loaded', 'success');
+            } catch (err) {
+                updateStatus('Error loading layers: ' + err.message, 'error');
+            }
+        }
+
+        async function loadLayer(filename, key, processor, color) {
+            try {
+                const response = await fetch(filename);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                
+                processor(data, layerGroups[key], color);
+                
+                // Update count
+                const count = layerGroups[key].getLayers().length;
+                document.getElementById(`count-${key}`).textContent = `${count} items`;
+                
+            } catch (e) {
+                console.warn(`Failed to load ${filename}:`, e);
+                document.getElementById(`count-${key}`).textContent = `Failed`;
+            }
+        }
+
+        function processPaths(data, layerGroup, color) {
+            const items = data.paths || [];
+            items.forEach(path => {
+                if (!path.centerline || path.centerline.length < 2) return;
+                
+                const latlngs = path.centerline.map(p => [p.lat, p.lon]);
+                
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: 2,
+                    opacity: 0.8
+                });
+
+                const popup = `
+                    <div class="popup-content">
+                        <h4>Flight Path</h4>
+                        <p><b>ID:</b> ${path.id}</p>
+                        <p><b>Origin:</b> ${path.origin || 'N/A'}</p>
+                        <p><b>Dest:</b> ${path.destination || 'N/A'}</p>
+                        <p><b>Flights:</b> ${path.member_count}</p>
+                    </div>
+                `;
+                polyline.bindPopup(popup);
+                layerGroup.addLayer(polyline);
+            });
+        }
+
+        function processTurns(data, layerGroup, color) {
+            const items = data.zones || [];
+            items.forEach(zone => {
+                if (!zone.lat || !zone.lon) return;
+
+                const circle = L.circle([zone.lat, zone.lon], {
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.2,
+                    radius: (zone.radius_nm || 3) * 1852, // nm to meters
+                    weight: 1
+                });
+
+                const popup = `
+                    <div class="popup-content">
+                        <h4>Turn Zone</h4>
+                        <p><b>ID:</b> ${zone.id}</p>
+                        <p><b>Radius:</b> ${zone.radius_nm} nm</p>
+                        <p><b>Alt:</b> ${Math.round(zone.avg_alt_ft)} ft</p>
+                        <p><b>Flights:</b> ${zone.member_count}</p>
+                    </div>
+                `;
+                circle.bindPopup(popup);
+                layerGroup.addLayer(circle);
+            });
+        }
+
+        function processProcedures(data, layerGroup, color) {
+            const items = data.procedures || [];
+            items.forEach(proc => {
+                if (!proc.centerline || proc.centerline.length < 2) return;
+
+                const latlngs = proc.centerline.map(p => [p.lat, p.lon]);
+                
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: 3,
+                    opacity: 0.9,
+                    dashArray: '5, 10'
+                });
+
+                const popup = `
+                    <div class="popup-content">
+                        <h4>${proc.type} Procedure</h4>
+                        <p><b>ID:</b> ${proc.id}</p>
+                        <p><b>Airport:</b> ${proc.airport}</p>
+                        <p><b>Flights:</b> ${proc.member_count}</p>
+                    </div>
+                `;
+                polyline.bindPopup(popup);
+                layerGroup.addLayer(polyline);
+            });
+        }
+
+        function toggleLayer(key, checked) {
+            if (checked) {
+                map.addLayer(layerGroups[key]);
+            } else {
+                map.removeLayer(layerGroups[key]);
+            }
+        }
+
+        // Start loading
+        loadLayers();
+
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
