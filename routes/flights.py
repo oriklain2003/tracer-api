@@ -2167,31 +2167,35 @@ def get_live_flight_status(flight_id: str):
                         
                         # Get the most recent 10 points from tracks
                         # Try normal_tracks first (most common), then anomalies_tracks
-                        for table in ['normal_tracks', 'anomalies_tracks']:
-                            cursor.execute(f"""
-                                SELECT lat, lon, alt, timestamp, gspeed, track, callsign 
-                                FROM {schema}.{table}
-                                WHERE flight_id = %s 
-                                ORDER BY timestamp DESC
-                                LIMIT 10
-                            """, (flight_id,))
-                            rows = cursor.fetchall()
-                            
-                            if rows:
-                                source_schema = schema
-                                for row in rows:
-                                    points.append({
-                                        "lat": row[0],
-                                        "lon": row[1],
-                                        "alt": row[2],
-                                        "timestamp": row[3],
-                                        "gspeed": row[4],
-                                        "track": row[5],
-                                        "callsign": row[6]
-                                    })
-                                    if not callsign and row[6]:
-                                        callsign = row[6]
-                                break
+                        for table in ['normal_tracks', 'anomalies_tracks', 'flight_tracks']:
+                            try:
+                                cursor.execute(f"""
+                                    SELECT lat, lon, alt, timestamp, gspeed, track, callsign 
+                                    FROM {schema}.{table}
+                                    WHERE flight_id = %s 
+                                    ORDER BY timestamp DESC
+                                    LIMIT 10
+                                """, (flight_id,))
+                                rows = cursor.fetchall()
+                                
+                                if rows:
+                                    source_schema = schema
+                                    for row in rows:
+                                        points.append({
+                                            "lat": row[0],
+                                            "lon": row[1],
+                                            "alt": row[2],
+                                            "timestamp": row[3],
+                                            "gspeed": row[4],
+                                            "track": row[5],
+                                            "callsign": row[6]
+                                        })
+                                        if not callsign and row[6]:
+                                            callsign = row[6]
+                                    break
+                            except Exception as e:
+                                print(f"Error fetching from {schema} schema: {e}")
+                                
                         
                         # If we found points, stop searching
                         if points:
