@@ -11,6 +11,7 @@ than the original implementations by:
 All methods maintain backward compatibility with original signatures.
 """
 import json
+import logging
 import sqlite3
 import time
 import numpy as np
@@ -39,11 +40,20 @@ class OptimizedStatisticsEngine:
         """Initialize with database paths."""
         self.db_paths = db_paths
     
+    def _logger(self):
+        return logging.getLogger(__name__)
+
     @contextmanager
     def _get_connection(self, db_name: str):
         """Get a fresh database connection as context manager (closes automatically)."""
         path = self.db_paths.get(db_name)
         if not path or not path.exists():
+            if db_name in ("research", "tagged"):
+                self._logger().warning(
+                    "stats overview: DB path missing or not found for %s: %s",
+                    db_name,
+                    path if path else "(not in db_paths)",
+                )
             yield None
             return
         conn = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
@@ -81,20 +91,24 @@ class OptimizedStatisticsEngine:
             'unplanned_landing': 0
         }
         
-        # 1. Get total flight count from research_new.db flight_metadata table
-        with self._get_connection('research') as conn:
-            if conn:
-                # Use flight_metadata for accurate distinct flight count
-                query = """
-                SELECT COUNT(DISTINCT flight_id) as total_flights
-                FROM flight_metadata
-                WHERE first_seen_ts BETWEEN ? AND ?
-                """
-                cursor = conn.cursor()
-                cursor.execute(query, (start_ts, end_ts))
-                result = cursor.fetchone()
-                if result:
-                    stats['total_flights'] = result[0] or 0
+        # 1. Total flights: simple count from Postgres research.flight_metadata for the range
+        try:
+            from service.pg_provider import count_flights_in_range
+            stats['total_flights'] = count_flights_in_range(start_ts, end_ts, schema='research')
+        except Exception as e:
+            self._logger().debug("total_flights from Postgres failed, trying SQLite: %s", e)
+            with self._get_connection('research') as conn:
+                if conn:
+                    query = """
+                    SELECT COUNT(DISTINCT flight_id) as total_flights
+                    FROM flight_metadata
+                    WHERE first_seen_ts BETWEEN ? AND ?
+                    """
+                    cursor = conn.cursor()
+                    cursor.execute(query, (start_ts, end_ts))
+                    result = cursor.fetchone()
+                    if result:
+                        stats['total_flights'] = result[0] or 0
         
         # 2. Get military flight count from feedback_tagged.db (tagged/verified data)
         # This counts flights where is_military=1 OR category='Military_and_government'

@@ -20,6 +20,8 @@ from datetime import datetime
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
+from core.airport_lookup import enrich_origin_destination
+
 # Load environment variables
 load_dotenv()
 
@@ -211,6 +213,29 @@ def get_connection():
     pool = get_pool()
     with pool.get_connection() as conn:
         yield conn
+
+
+def count_flights_in_range(start_ts: int, end_ts: int, schema: str = 'research') -> int:
+    """
+    Simple count of distinct flights in a time range (for stats/overview total_flights).
+    Uses flight_metadata.first_seen_ts in the given schema.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT flight_id)
+                    FROM {schema}.flight_metadata
+                    WHERE first_seen_ts BETWEEN %s AND %s
+                    """,
+                    (start_ts, end_ts),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else 0
+    except Exception as e:
+        logger.warning(f"count_flights_in_range failed: {e}")
+        return 0
 
 
 def close_pool():
@@ -435,7 +460,7 @@ def get_tagged_feedback_history(
                             logger.error(f"Error parsing full_report: {e}")
                             pass
                     
-                    result.append({
+                    item = {
                         'flight_id': row['flight_id'],
                         'timestamp': row['timestamp'],
                         'first_seen_ts': row['first_seen_ts'],
@@ -454,6 +479,8 @@ def get_tagged_feedback_history(
                         'airline': row['airline'],
                         'origin_airport': row['origin_airport'],
                         'destination_airport': row['destination_airport'],
+                        'origin_place': None,
+                        'destination_place': None,
                         'aircraft_type': row['aircraft_type'],
                         'aircraft_registration': row['aircraft_registration'],
                         'category': row['category'],
@@ -479,7 +506,11 @@ def get_tagged_feedback_history(
                         'matched_rule_categories': row['matched_rule_categories'],
                         'track_count': row['track_count'],
                         'source': 'tagged'
-                    })
+                    }
+                    places = enrich_origin_destination(row['origin_airport'], row['destination_airport'])
+                    item['origin_place'] = places['origin_place']
+                    item['destination_place'] = places['destination_place']
+                    result.append(item)
                 
                 return result
                 
@@ -678,7 +709,9 @@ def get_research_anomalies(
                         except Exception as e:
                             logger.error(f"Error parsing full_report: {e}")
                     
-                    result.append(dict(row))
+                    r = dict(row)
+                    r.update(enrich_origin_destination(r.get('origin_airport'), r.get('destination_airport')))
+                    result.append(r)
                 return result
                 
     except Exception as e:
@@ -782,12 +815,15 @@ def get_all_live_flights(cutoff_minutes: int = 15) -> Dict[str, Any]:
                         if sev_row and sev_row["severity_cnn"]:
                             severity = sev_row["severity_cnn"]
                     
+                    places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
                     flights.append({
                         "flight_id": flight_id,
                         "callsign": row["callsign"],
                         "airline": row["airline"],
                         "origin": row["origin_airport"],
                         "destination": row["destination_airport"],
+                        "origin_place": places["origin_place"],
+                        "destination_place": places["destination_place"],
                         "lat": lat,
                         "lon": lon,
                         "alt": alt or 0,
