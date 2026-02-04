@@ -26,8 +26,9 @@ import sys
 import logging
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -46,6 +47,10 @@ except ImportError:
 
 from anomaly_pipeline import AnomalyPipeline
 from flight_fetcher import get, search_flight_path, serialize_flight, deserialize_flight
+
+# Logging setup (must be before any logger usage)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # FR24 SDK
 try:
@@ -77,10 +82,6 @@ gemini_client = genai.Client(
     api_key=GEMINI_API_KEY,
     http_options={'api_version': 'v1alpha'}
 )
-
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # ============================================================================
 # APP INITIALIZATION
@@ -342,6 +343,11 @@ from service.analytics.statistics import clear_stats_cache, get_cache_info
 # Route planner
 from service.route_planner import get_route_planner, get_strike_generator, FIGHTER_JET_PROFILE, CIVIL_AIRCRAFT_PROFILE
 
+# PostgreSQL connection pool for user management
+from service.pg_provider import get_pool
+
+pg_pool = get_pool()
+
 # ============================================================================
 # ROUTER CONFIGURATION
 # ============================================================================
@@ -352,6 +358,13 @@ from routes.analytics import router as analytics_router, configure as configure_
 from routes.ai_routes import router as ai_router, configure as configure_ai
 from routes.route_planning import router as route_planning_router, configure as configure_route_planning
 from routes.trajectory_planner import router as trajectory_router, configure as configure_trajectory
+from routes.users import router as users_router, configure as configure_users
+
+# Configure users router first (authentication and user management)
+configure_users(pg_pool=pg_pool)
+
+# Get auth middleware from users router to inject into other routers
+from routes.users import _auth_middleware as users_auth_middleware
 
 # Configure flights router
 configure_flights(
@@ -368,7 +381,7 @@ configure_flights(
     db_live_research_path=DB_LIVE_RESEARCH_PATH,
 )
 
-# Configure feedback router
+# Configure feedback router with auth middleware
 configure_feedback(
     cache_db_path=CACHE_DB_PATH,
     db_anomalies_path=DB_ANOMALIES_PATH,
@@ -383,6 +396,7 @@ configure_feedback(
     fetch_flight_details_func=fetch_flight_details,
     update_flight_record_func=update_flight_record,
     save_feedback_func=save_feedback,
+    auth_middleware=users_auth_middleware,
 )
 
 # Configure analytics router
@@ -431,17 +445,42 @@ configure_trajectory(project_root=PROJECT_ROOT)
 app.include_router(
     flights_router)  # /api/live/*, /api/research/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
 app.include_router(feedback_router)  # /api/feedback/*, /api/replay/*
+
+
+# Public SPA routes (no auth - users need to load login page)
+PROD_UI_DIST = PROJECT_ROOT / "prod-ui" / "dist"
+
+
+@app.get("/prod")
+def get_prod():
+    """Serve the prod-ui React app."""
+    index_path = PROD_UI_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    raise HTTPException(status_code=404, detail="prod-ui not built. Run 'npm run build' in prod-ui folder.")
+
+
+@app.get("/prod/{path:path}")
+def get_prod_spa(path: str):
+    """Handle SPA routing - serve index.html for all sub-routes."""
+    static_file = PROD_UI_DIST / path
+    if static_file.exists() and static_file.is_file():
+        return FileResponse(str(static_file))
+    index_path = PROD_UI_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    raise HTTPException(status_code=404, detail="prod-ui not built. Run 'npm run build' in prod-ui folder.")
 app.include_router(analytics_router)  # /api/stats/*, /api/intel/*
 app.include_router(ai_router)  # /api/ai/*
 app.include_router(route_planning_router)  # /api/route-check/*
 app.include_router(trajectory_router)  # /api/trajectory/*
+app.include_router(users_router)  # /api/auth/*, /api/users/*
 
 # ============================================================================
 # MONITOR CONTROL (Database-based, not subprocess)
 # ============================================================================
 
 from service.pg_provider import get_monitor_status, set_monitor_active
-from fastapi import HTTPException
 
 
 @app.post("/api/monitor/start")
@@ -552,6 +591,51 @@ def health_check():
 # STARTUP
 # ============================================================================
 
+async def create_default_admin():
+    """Create default admin user if no users exist"""
+    try:
+        from service.user_service import UserService
+        from service.auth_service import AuthService, AuthConfig
+        from core.auth_models import UserType
+        import os
+        
+        user_service = UserService(pg_pool)
+        
+        # Check if any users exist
+        users, total = user_service.list_users(page=1, page_size=1)
+        if total > 0:
+            logger.info(f"Users exist ({total}), skipping default admin creation")
+            return
+        
+        # Create default admin user
+        auth_config = AuthConfig(
+            jwt_secret_key=os.getenv("JWT_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
+        )
+        auth_service = AuthService(auth_config)
+        
+        default_username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+        default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+        
+        password_hash = auth_service.hash_password(default_password)
+        
+        user = user_service.create_user(
+            username=default_username,
+            email=None,
+            password_hash=password_hash,
+            user_type=UserType.ADMIN,
+            max_active_sessions=10
+        )
+        
+        if user:
+            logger.warning(f"Default admin user created: {default_username}")
+            logger.warning("CHANGE THE DEFAULT PASSWORD IMMEDIATELY!")
+        else:
+            logger.error("Failed to create default admin user")
+            
+    except Exception as e:
+        logger.error(f"Error creating default admin: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 async def startup_event():
     import sqlite3
@@ -571,6 +655,10 @@ async def startup_event():
 
     get_pipeline()
     init_dbs()
+    
+    # Create default admin user if needed
+    await create_default_admin()
+    
     logger.info("Production API initialized successfully")
 
 
@@ -597,6 +685,9 @@ def root():
             "weather": "/api/weather/*",
             "rules": "/api/rules/*",
             "learned_layers": "/api/learned-layers",
-            "health": "/api/health"
+            "health": "/api/health",
+            "auth": "/api/auth/*",
+            "users": "/api/users/*",
+            "admin_sessions": "/api/admin/sessions"
         }
     }

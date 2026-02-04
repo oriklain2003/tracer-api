@@ -12,7 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from routes.users import get_current_user
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -26,7 +28,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Flights"])
+router = APIRouter(tags=["Flights"], dependencies=[Depends(get_current_user)])
 
 # These will be set by the main api.py module
 CACHE_DB_PATH: Path = None
@@ -2486,34 +2488,6 @@ def import_flight_to_feedback(request: FlightImportRequest):
     except Exception as e:
         logger.error(f"Error importing flight: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/prod")
-def get_prod():
-    """Serve the prod-ui React app."""
-    from pathlib import Path
-    index_path = Path(__file__).parent.parent.parent.parent / "prod-ui" / "dist" / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    raise HTTPException(status_code=404, detail="prod-ui not built. Run 'npm run build' in prod-ui folder.")
-
-
-@router.get("/prod/{path:path}")
-def get_prod_spa(path: str):
-    """Handle SPA routing - serve index.html for all sub-routes."""
-    from pathlib import Path
-    dist_path = Path(__file__).parent.parent.parent.parent / "prod-ui" / "dist"
-    
-    # Try to serve static files first (like onyx-logo.svg)
-    static_file = dist_path / path
-    if static_file.exists() and static_file.is_file():
-        return FileResponse(str(static_file))
-    
-    # Otherwise serve index.html for SPA routing
-    index_path = dist_path / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    raise HTTPException(status_code=404, detail="prod-ui not built. Run 'npm run build' in prod-ui folder.")
 
 
 # ============================================================================

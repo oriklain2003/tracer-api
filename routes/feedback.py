@@ -11,11 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Iterable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from routes.users import get_current_user
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Feedback"])
+router = APIRouter(tags=["Feedback"], dependencies=[Depends(get_current_user)])
 
 # These will be set by the main api.py module
 CACHE_DB_PATH: Path = None
@@ -33,6 +35,7 @@ _get_unified_track = None
 _fetch_flight_details = None
 _update_flight_record = None
 _save_feedback = None
+_auth_middleware = None
 
 
 def configure(
@@ -49,11 +52,13 @@ def configure(
     fetch_flight_details_func,
     update_flight_record_func,
     save_feedback_func,
+    auth_middleware=None,
 ):
     """Configure the router with paths and dependencies from api.py"""
     global CACHE_DB_PATH, DB_ANOMALIES_PATH, DB_TRACKS_PATH, DB_RESEARCH_PATH
     global PRESENT_DB_PATH, FEEDBACK_DB_PATH, FEEDBACK_TAGGED_DB_PATH, PROJECT_ROOT
     global _get_pipeline, _get_unified_track, _fetch_flight_details, _update_flight_record, _save_feedback
+    global _auth_middleware
     
     CACHE_DB_PATH = cache_db_path
     DB_ANOMALIES_PATH = db_anomalies_path
@@ -68,9 +73,17 @@ def configure(
     _fetch_flight_details = fetch_flight_details_func
     _update_flight_record = update_flight_record_func
     _save_feedback = save_feedback_func
+    _auth_middleware = auth_middleware
     
     # Load airports data when configured
     _load_airports_data()
+
+
+def _get_feedback_permission_dependency():
+    """Get permission dependency if auth is configured, otherwise return None"""
+    if _auth_middleware is not None:
+        return Depends(_auth_middleware.require_permission("feedback.create"))
+    return None
 
 
 # ============================================================================
@@ -465,7 +478,10 @@ def get_feedback_track(flight_id: str):
 
 
 @router.post("/api/feedback/reanalyze/{flight_id}")
-def reanalyze_feedback_flight(flight_id: str):
+def reanalyze_feedback_flight(
+    flight_id: str,
+    current_user=Depends(lambda: _get_feedback_permission_dependency() or (lambda: None)())
+):
     """
     Re-run analysis for a flight, update feedback DB and present_anomalies DB,
     and return the new report.
@@ -1230,7 +1246,10 @@ def update_feedback(feedback_id: int, update_data: dict):
 
 
 @router.post("/api/feedback")
-def submit_feedback(feedback: dict):
+def submit_feedback(
+    feedback: dict,
+    current_user=Depends(lambda: _get_feedback_permission_dependency() or (lambda: None)())
+):
     """
     Submit user feedback for a flight.
     Copies ALL flight data (metadata, tracks, full anomaly report) from research_new.db 

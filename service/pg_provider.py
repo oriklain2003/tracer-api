@@ -156,9 +156,11 @@ class PostgreSQLConnectionPool:
         if hasattr(self, '_pool') and self._pool:
             try:
                 self._pool.closeall()
-                logger.info("PostgreSQL connection pool closed")
             except Exception as e:
-                logger.error(f"Error closing connection pool: {e}")
+                try:
+                    logger.error(f"Error closing connection pool: {e}")
+                except (ValueError, OSError):
+                    pass
             finally:
                 self.__class__._initialized = False
     
