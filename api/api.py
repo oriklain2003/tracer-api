@@ -353,7 +353,7 @@ pg_pool = get_pool()
 # ROUTER CONFIGURATION
 # ============================================================================
 
-from routes.flights import router as flights_router, configure as configure_flights, get_unified_track
+from routes.flights import router as flights_router, research_rerun_router, configure as configure_flights, get_unified_track
 from routes.feedback import router as feedback_router, configure as configure_feedback
 from routes.analytics import router as analytics_router, configure as configure_analytics
 from routes.ai_routes import router as ai_router, configure as configure_ai
@@ -444,7 +444,8 @@ configure_trajectory(project_root=PROJECT_ROOT)
 
 # Include all routers used by prod-ui
 app.include_router(
-    flights_router)  # /api/live/*, /api/research/*, /api/research_rerun/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
+    flights_router)  # /api/live/*, /api/research/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
+app.include_router(research_rerun_router)  # /api/research_rerun/* (no auth required)
 app.include_router(feedback_router)  # /api/feedback/*, /api/replay/*
 
 

@@ -29,6 +29,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Flights"], dependencies=[Depends(get_current_user)])
+# Separate router for research_rerun routes (no authentication required)
+research_rerun_router = APIRouter(tags=["Research Rerun - Public"])
 
 # These will be set by the main api.py module
 CACHE_DB_PATH: Path = None
@@ -1317,7 +1319,7 @@ def get_research_flight_metadata(flight_id: str):
 # RESEARCH RERUN ROUTES (using research_old schema)
 # ============================================================================
 
-@router.get("/api/research_rerun/anomalies")
+@research_rerun_router.get("/api/research_rerun/anomalies")
 def get_research_rerun_anomalies(start_ts: int, end_ts: int):
     """
     Fetch anomalies from the research_old database (rerun analysis) within a time range.
@@ -1367,7 +1369,7 @@ def get_research_rerun_anomalies(start_ts: int, end_ts: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/research_rerun/track/{flight_id}")
+@research_rerun_router.get("/api/research_rerun/track/{flight_id}")
 def get_research_rerun_track(flight_id: str):
     """
     Fetch the full track for a flight from research_old schema (PostgreSQL).
@@ -1394,7 +1396,7 @@ def get_research_rerun_track(flight_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/research_rerun/metadata/{flight_id}")
+@research_rerun_router.get("/api/research_rerun/metadata/{flight_id}")
 def get_research_rerun_flight_metadata(flight_id: str):
     """
     Get flight metadata for a research_rerun flight from PostgreSQL research_old schema.
@@ -1554,7 +1556,7 @@ def get_research_rerun_flight_metadata(flight_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/research_rerun/callsign/{flight_id}")
+@research_rerun_router.get("/api/research_rerun/callsign/{flight_id}")
 def get_research_rerun_callsign(flight_id: str):
     """
     Fetch a callsign for a research_rerun flight ID from research_old schema.
