@@ -62,7 +62,7 @@ WARNING_HORIZONTAL_NM = 10.0  # Warning threshold
 WARNING_VERTICAL_FT = 2000.0  # Warning threshold
 
 # FR24 API Token - loaded from environment
-FR24_API_TOKEN = os.getenv("FR24_API_TOKEN")
+FR24_API_TOKEN = os.environ.get("FR24_API_TOKEN")
 if not FR24_API_TOKEN:
     logger.warning("FR24_API_TOKEN not set in environment variables. Traffic fetching will be disabled.")
 

@@ -42,7 +42,7 @@ class PostgreSQLConnectionPool:
     _initialized = False
     
     # PostgreSQL connection - loaded from environment variables
-    PG_DSN = os.getenv("POSTGRES_DSN")
+    PG_DSN = os.environ.get("POSTGRES_DSN")
     if not PG_DSN:
         raise ValueError("POSTGRES_DSN environment variable is required")
     
@@ -50,8 +50,8 @@ class PostgreSQLConnectionPool:
     # LOW traffic: MIN=2, MAX=5
     # MEDIUM traffic: MIN=5, MAX=15  
     # HIGH traffic: MIN=10, MAX=30
-    MIN_CONNECTIONS = int(os.getenv("PG_POOL_MIN_CONNECTIONS", "2"))
-    MAX_CONNECTIONS = int(os.getenv("PG_POOL_MAX_CONNECTIONS", "10"))
+    MIN_CONNECTIONS = int(os.environ.get("PG_POOL_MIN_CONNECTIONS", "2"))
+    MAX_CONNECTIONS = int(os.environ.get("PG_POOL_MAX_CONNECTIONS", "10"))
     
     def __new__(cls):
         """Singleton pattern - only create one instance."""
@@ -74,8 +74,8 @@ class PostgreSQLConnectionPool:
                 return
             
             try:
-                connect_timeout = int(os.getenv("PG_CONNECT_TIMEOUT", "10"))
-                statement_timeout = int(os.getenv("PG_STATEMENT_TIMEOUT", "30000"))
+                connect_timeout = int( "10")
+                statement_timeout = int( "30000")
                 
                 self._pool = psycopg2.pool.ThreadedConnectionPool(
                     self.MIN_CONNECTIONS,
@@ -629,7 +629,8 @@ def get_unified_track(flight_id: str) -> Optional[Dict[str, Any]]:
 def get_research_anomalies(
     start_ts: int,
     end_ts: int,
-    limit: int = 1000
+    limit: int = 1000,
+    schema: str = 'research'
 ) -> List[Dict[str, Any]]:
     """
     Fetch anomalies from research schema.
@@ -638,6 +639,7 @@ def get_research_anomalies(
         start_ts: Start timestamp
         end_ts: End timestamp
         limit: Maximum results
+        schema: Schema to query (research or research_old)
     
     Returns:
         List of anomaly reports with metadata
@@ -646,7 +648,7 @@ def get_research_anomalies(
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT 
                         ar.*,
                         fm.callsign,
@@ -656,8 +658,8 @@ def get_research_anomalies(
                         fm.destination_airport,
                         fm.aircraft_type,
                         fm.total_points
-                    FROM research.anomaly_reports ar
-                    LEFT JOIN research.flight_metadata fm ON ar.flight_id = fm.flight_id
+                    FROM {schema}.anomaly_reports ar
+                    LEFT JOIN {schema}.flight_metadata fm ON ar.flight_id = fm.flight_id
                     WHERE ar.timestamp BETWEEN %s AND %s
                       AND ar.is_anomaly = true
                     ORDER BY ar.timestamp DESC

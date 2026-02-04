@@ -13,7 +13,7 @@ load_dotenv()
 def get(flight_id="3bc6854c"):
     from fr24sdk.client import Client
 
-    api_token = os.getenv("FR24_API_TOKEN")
+    api_token = os.environ.get("FR24_API_TOKEN")
     if not api_token:
         raise ValueError("FR24_API_TOKEN environment variable is required")
     
@@ -57,7 +57,7 @@ def search_flight_path(callsign: str, start_date: datetime, end_date: datetime):
     """
     from fr24sdk.client import Client
     
-    api_token = os.getenv("FR24_API_TOKEN")
+    api_token = os.environ.get("FR24_API_TOKEN")
     if not api_token:
         raise ValueError("FR24_API_TOKEN environment variable is required")
     

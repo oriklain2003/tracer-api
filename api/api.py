@@ -10,6 +10,7 @@ Routes included:
 - Live flight data (anomalies, tracks, flight status)
 - System reports (feedback_tagged.db)
 - Research data
+- Research rerun data (research_old schema)
 - Learned layers (paths, tubes)
 - Rules
 - Statistics (overview, safety, intelligence batches)
@@ -57,9 +58,9 @@ try:
     from fr24sdk.client import Client as FR24Client
 
     FR24_AVAILABLE = True
-    FR24_API_TOKEN = os.getenv("FR24_API_TOKEN")
+    FR24_API_TOKEN = os.environ.get("FR24_API_TOKEN")
     if not FR24_API_TOKEN:
-        logger.warning("FR24_API_TOKEN not set in environment variables")
+        print("FR24_API_TOKEN not set in environment variables")
         FR24_AVAILABLE = False
 except ImportError:
     FR24_AVAILABLE = False
@@ -70,12 +71,12 @@ from openai import OpenAI
 from google import genai
 from google.genai import types
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable is required")
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
 gemini_client = genai.Client(
@@ -443,7 +444,7 @@ configure_trajectory(project_root=PROJECT_ROOT)
 
 # Include all routers used by prod-ui
 app.include_router(
-    flights_router)  # /api/live/*, /api/research/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
+    flights_router)  # /api/live/*, /api/research/*, /api/research_rerun/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
 app.include_router(feedback_router)  # /api/feedback/*, /api/replay/*
 
 
@@ -677,6 +678,7 @@ def root():
             "live": "/api/live/*",
             "feedback": "/api/feedback/*",
             "research": "/api/research/*",
+            "research_rerun": "/api/research_rerun/*",
             "stats": "/api/stats/*",
             "intelligence": "/api/intel/*",
             "ai": "/api/ai/*",

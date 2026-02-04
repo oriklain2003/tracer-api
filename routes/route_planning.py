@@ -22,7 +22,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Aviation Edge API for scheduled flights
-AVIATION_EDGE_API_KEY = os.getenv("AVIATION_EDGE_API_KEY")
+AVIATION_EDGE_API_KEY = os.environ.get("AVIATION_EDGE_API_KEY")
 if not AVIATION_EDGE_API_KEY:
     logger.warning("AVIATION_EDGE_API_KEY not set in environment variables")
 AVIATION_EDGE_BASE_URL = "https://aviation-edge.com/v2/public/flightsFuture"

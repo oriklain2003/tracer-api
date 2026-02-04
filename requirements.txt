@@ -47,7 +47,7 @@ dataclasses-json>=0.6.0,<1.0.0
 # Map Generation
 staticmap>=0.5.7
 Pillow>=10.2.0,<11.0.0
-
+shapely
 # Date/Time
 python-dateutil>=2.8.0
 

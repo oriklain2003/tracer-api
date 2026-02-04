@@ -1313,6 +1313,332 @@ def get_research_flight_metadata(flight_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# RESEARCH RERUN ROUTES (using research_old schema)
+# ============================================================================
+
+@router.get("/api/research_rerun/anomalies")
+def get_research_rerun_anomalies(start_ts: int, end_ts: int):
+    """
+    Fetch anomalies from the research_old database (rerun analysis) within a time range.
+    Uses PostgreSQL research_old schema.
+    """
+    try:
+        # Import PostgreSQL provider
+        from service.pg_provider import get_research_anomalies
+        
+        # Fetch from PostgreSQL research_old schema
+        rows = get_research_anomalies(start_ts, end_ts, limit=1000, schema='research_old')
+        
+        # Transform to match expected frontend format
+        results = []
+        for row in rows:
+            # full_report is already parsed by pg_provider
+            full_report = row.get('full_report')
+            
+            # Extract callsign and flight_number from row or report
+            callsign = row.get('callsign')
+            flight_number = row.get('flight_number')
+            
+            if not callsign and isinstance(full_report, dict):
+                callsign = full_report.get("summary", {}).get("callsign")
+            
+            results.append({
+                "flight_id": row.get('flight_id'),
+                "timestamp": row.get('timestamp'),
+                "is_anomaly": bool(row.get('is_anomaly', True)),
+                "severity_cnn": row.get('severity_cnn'),
+                "severity_dense": row.get('severity_dense'),
+                "full_report": full_report,
+                "callsign": callsign,
+                "flight_number": flight_number,
+                # Include additional metadata from PostgreSQL
+                "airline": row.get('airline'),
+                "origin_airport": row.get('origin_airport'),
+                "destination_airport": row.get('destination_airport'),
+                "aircraft_type": row.get('aircraft_type'),
+                "total_points": row.get('total_points')
+            })
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch research_rerun anomalies from PostgreSQL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/research_rerun/track/{flight_id}")
+def get_research_rerun_track(flight_id: str):
+    """
+    Fetch the full track for a flight from research_old schema (PostgreSQL).
+    Checks both anomalies_tracks and normal_tracks in the research_old schema.
+    """
+    try:
+        from service.pg_provider import get_flight_track
+        
+        # Fetch track from PostgreSQL research_old schema
+        points = get_flight_track(flight_id, schema='research_old')
+        
+        if not points:
+            raise HTTPException(status_code=404, detail="Track not found in research_old schema")
+        
+        return {
+            "flight_id": flight_id,
+            "points": points
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Research rerun track fetch error from PostgreSQL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/research_rerun/metadata/{flight_id}")
+def get_research_rerun_flight_metadata(flight_id: str):
+    """
+    Get flight metadata for a research_rerun flight from PostgreSQL research_old schema.
+    Extracts data from flight_metadata table, anomaly_reports, and track tables.
+    """
+    try:
+        from service.pg_provider import get_flight_metadata, get_flight_track, get_connection
+        import psycopg2.extras
+        
+        metadata = {"flight_id": flight_id}
+        
+        # 1. Get data from flight_metadata table (PostgreSQL research_old schema)
+        fm_data = get_flight_metadata(flight_id, schema='research_old')
+        
+        if fm_data:
+            # Copy all metadata fields
+            metadata.update(fm_data)
+            # Ensure booleans are properly converted
+            if 'emergency_squawk_detected' in metadata:
+                metadata['emergency_squawk_detected'] = bool(metadata['emergency_squawk_detected'])
+            if 'is_military' in metadata:
+                metadata['is_military'] = bool(metadata['is_military'])
+        
+        # 2. Get data from anomaly_reports (for anomaly-specific fields)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT timestamp, is_anomaly, severity_cnn, severity_dense, full_report 
+                    FROM research_old.anomaly_reports 
+                    WHERE flight_id = %s 
+                    LIMIT 1
+                    """,
+                    (flight_id,)
+                )
+                report_row = cursor.fetchone()
+                
+                full_report = None
+                if report_row:
+                    metadata["anomaly_timestamp"] = report_row["timestamp"]
+                    metadata["is_anomaly"] = bool(report_row["is_anomaly"])
+                    metadata["severity_cnn"] = report_row["severity_cnn"]
+                    metadata["severity_dense"] = report_row["severity_dense"]
+                    
+                    # Parse full_report JSON for any missing fields
+                    raw_report = report_row["full_report"]
+                    if raw_report:
+                        if isinstance(raw_report, str):
+                            try:
+                                full_report = json.loads(raw_report)
+                            except:
+                                full_report = None
+                        else:
+                            full_report = raw_report
+                
+                # Fill in any missing fields from full_report summary
+                if full_report and isinstance(full_report, dict):
+                    summary = full_report.get("summary", {})
+                    # Only fill if not already set from flight_metadata
+                    if not metadata.get("callsign"):
+                        metadata["callsign"] = summary.get("callsign")
+                    if not metadata.get("flight_number"):
+                        metadata["flight_number"] = summary.get("flight_number")
+                    if not metadata.get("airline"):
+                        metadata["airline"] = summary.get("airline")
+                    if not metadata.get("airline_code"):
+                        metadata["airline_code"] = summary.get("airline_code")
+                    if not metadata.get("aircraft_type"):
+                        metadata["aircraft_type"] = summary.get("aircraft_type")
+                    if not metadata.get("aircraft_model"):
+                        metadata["aircraft_model"] = summary.get("aircraft_model")
+                    if not metadata.get("aircraft_registration"):
+                        metadata["aircraft_registration"] = summary.get("aircraft_registration")
+                    if not metadata.get("origin_airport"):
+                        metadata["origin_airport"] = summary.get("origin") or summary.get("origin_airport")
+                    if not metadata.get("destination_airport"):
+                        metadata["destination_airport"] = summary.get("destination") or summary.get("destination_airport")
+        
+        # 3. Get track data to compute/fill missing stats (only if not already from flight_metadata)
+        if not fm_data:
+            points = get_flight_track(flight_id, schema='research_old')
+            
+            if points:
+                # Extract callsign if not already set
+                if not metadata.get("callsign"):
+                    for p in points:
+                        if p.get("callsign"):
+                            metadata["callsign"] = p["callsign"]
+                            break
+                
+                # Compute timestamps
+                if not metadata.get("first_seen_ts"):
+                    metadata["first_seen_ts"] = points[0].get("timestamp")
+                if not metadata.get("last_seen_ts"):
+                    metadata["last_seen_ts"] = points[-1].get("timestamp")
+                
+                # Compute position data
+                if not metadata.get("start_lat"):
+                    metadata["start_lat"] = points[0].get("lat")
+                if not metadata.get("start_lon"):
+                    metadata["start_lon"] = points[0].get("lon")
+                if not metadata.get("end_lat"):
+                    metadata["end_lat"] = points[-1].get("lat")
+                if not metadata.get("end_lon"):
+                    metadata["end_lon"] = points[-1].get("lon")
+                
+                # Compute flight stats if not available
+                if not metadata.get("total_points"):
+                    metadata["total_points"] = len(points)
+                
+                if not metadata.get("flight_duration_sec") and metadata.get("first_seen_ts") and metadata.get("last_seen_ts"):
+                    metadata["flight_duration_sec"] = metadata["last_seen_ts"] - metadata["first_seen_ts"]
+                
+                # Compute altitude stats if not available
+                alts = [p.get("alt") for p in points if p.get("alt") is not None and p.get("alt") > 0]
+                if alts:
+                    if not metadata.get("min_altitude_ft"):
+                        metadata["min_altitude_ft"] = min(alts)
+                    if not metadata.get("max_altitude_ft"):
+                        metadata["max_altitude_ft"] = max(alts)
+                    if not metadata.get("avg_altitude_ft"):
+                        metadata["avg_altitude_ft"] = sum(alts) / len(alts)
+                
+                # Compute speed stats if not available
+                speeds = [p.get("gspeed") for p in points if p.get("gspeed") is not None and p.get("gspeed") > 0]
+                if speeds:
+                    if not metadata.get("min_speed_kts"):
+                        metadata["min_speed_kts"] = min(speeds)
+                    if not metadata.get("max_speed_kts"):
+                        metadata["max_speed_kts"] = max(speeds)
+                    if not metadata.get("avg_speed_kts"):
+                        metadata["avg_speed_kts"] = sum(speeds) / len(speeds)
+                
+                # Collect squawk codes if not available
+                if not metadata.get("squawk_codes"):
+                    squawks = set()
+                    for p in points:
+                        sq = p.get("squawk")
+                        if sq and sq != "0000":
+                            squawks.add(str(sq))
+                    if squawks:
+                        metadata["squawk_codes"] = ",".join(sorted(squawks))
+                        # Check for emergency squawks
+                        emergency_codes = {"7500", "7600", "7700"}
+                        metadata["emergency_squawk_detected"] = bool(squawks & emergency_codes)
+        
+        # If no data found at all, return 404
+        if not fm_data and not report_row and (not 'first_seen_ts' in metadata):
+            raise HTTPException(status_code=404, detail="Flight not found in research_old schema")
+        
+        return metadata
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch research_rerun metadata from PostgreSQL for {flight_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/research_rerun/callsign/{flight_id}")
+def get_research_rerun_callsign(flight_id: str):
+    """
+    Fetch a callsign for a research_rerun flight ID from research_old schema.
+    Tries anomalies_tracks -> normal_tracks -> anomaly_reports summary.
+    """
+    try:
+        from service.pg_provider import get_connection
+        import psycopg2.extras
+        
+        callsign = None
+        
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                # Try anomalies_tracks first
+                try:
+                    cursor.execute(
+                        """
+                        SELECT callsign 
+                        FROM research_old.anomalies_tracks 
+                        WHERE flight_id = %s 
+                          AND callsign IS NOT NULL 
+                          AND callsign != '' 
+                        LIMIT 1
+                        """,
+                        (flight_id,)
+                    )
+                    row = cursor.fetchone()
+                    if row and row['callsign']:
+                        callsign = row['callsign']
+                except Exception:
+                    pass
+                
+                # Fallback to normal_tracks
+                if not callsign:
+                    try:
+                        cursor.execute(
+                            """
+                            SELECT callsign 
+                            FROM research_old.normal_tracks 
+                            WHERE flight_id = %s 
+                              AND callsign IS NOT NULL 
+                              AND callsign != '' 
+                            LIMIT 1
+                            """,
+                            (flight_id,)
+                        )
+                        row = cursor.fetchone()
+                        if row and row['callsign']:
+                            callsign = row['callsign']
+                    except Exception:
+                        pass
+                
+                # Final fallback: summary in anomaly_reports
+                if not callsign:
+                    try:
+                        cursor.execute(
+                            """
+                            SELECT full_report 
+                            FROM research_old.anomaly_reports 
+                            WHERE flight_id = %s 
+                            LIMIT 1
+                            """,
+                            (flight_id,)
+                        )
+                        row = cursor.fetchone()
+                        if row and row['full_report']:
+                            report = row['full_report']
+                            if isinstance(report, str):
+                                try:
+                                    report = json.loads(report)
+                                except Exception:
+                                    report = None
+                            if isinstance(report, dict):
+                                callsign = report.get("summary", {}).get("callsign")
+                    except Exception:
+                        pass
+        
+        return {"callsign": callsign}
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch research_rerun callsign for {flight_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/data/flights")
 def get_data_flights(start_ts: int, end_ts: int):
     """
