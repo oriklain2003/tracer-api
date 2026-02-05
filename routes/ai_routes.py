@@ -13,11 +13,36 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["AI"])
+
+# Anomaly rules metadata - same as in flights.py
+RULES_METADATA = [
+    # Emergency & Safety (Red)
+    {"id": 1, "name": "Emergency Squawks", "nameHe": "קודי חירום", "description": "Transponder emergency code (7500, 7600, 7700)", "category": "emergency", "color": "red"},
+    {"id": 2, "name": "Crash", "nameHe": "התרסקות", "description": "Aircraft crash or suspected crash event", "category": "emergency", "color": "red"},
+    {"id": 3, "name": "Proximity Alert", "nameHe": "התראת קרבה", "description": "Dangerous proximity between aircraft", "category": "emergency", "color": "red"},
+    
+    # Flight Operations (Blue)
+    {"id": 4, "name": "Holding Pattern", "nameHe": "דפוס המתנה", "description": "Aircraft in holding pattern", "category": "flight_ops", "color": "blue"},
+    {"id": 5, "name": "Go Around", "nameHe": "גו-אראונד", "description": "Aborted landing and go-around maneuver", "category": "flight_ops", "color": "blue"},
+    {"id": 6, "name": "Return to Land", "nameHe": "חזרה לנחיתה", "description": "Aircraft returning to departure airport", "category": "flight_ops", "color": "blue"},
+    {"id": 7, "name": "Unplanned Landing", "nameHe": "נחיתה לא מתוכננת", "description": "Landing at unplanned airport", "category": "flight_ops", "color": "blue"},
+    
+    # Technical (Purple)
+    {"id": 8, "name": "Signal Loss", "nameHe": "אובדן אות", "description": "Loss of ADS-B signal", "category": "technical", "color": "purple"},
+    {"id": 9, "name": "Off Course", "nameHe": "סטייה ממסלול", "description": "Significant deviation from expected flight path", "category": "technical", "color": "purple"},
+    {"id": 14, "name": "GPS Jamming", "nameHe": "שיבוש GPS", "description": "GPS jamming indicators detected", "category": "technical", "color": "purple"},
+    
+    # Military (Green)
+    {"id": 10, "name": "Military Flight", "nameHe": "טיסה צבאית", "description": "Identified military aircraft", "category": "military", "color": "green"},
+    {"id": 11, "name": "Operational Military", "nameHe": "טיסה צבאית מבצעית", "description": "Military aircraft on operational mission", "category": "military", "color": "green"},
+    {"id": 12, "name": "Suspicious Behavior", "nameHe": "התנהגות חשודה", "description": "Unusual or suspicious flight behavior", "category": "military", "color": "green"},
+    {"id": 13, "name": "Flight Academy", "nameHe": "בית ספר לטיסה", "description": "Training flight from flight school", "category": "military", "color": "green"},
+]
 
 # These will be set by the main api.py module
 FEEDBACK_TAGGED_DB_PATH: Path = None
@@ -152,6 +177,22 @@ class ReasoningRequest(BaseModel):
     flight_id: Optional[str] = None
     points: Optional[List[Dict[str, Any]]] = None
     anomaly_report: Optional[Dict[str, Any]] = None
+
+
+class ClassifyAnomalyRequest(BaseModel):
+    """Request for classifying an anomaly flight."""
+    flight_id: str
+    flight_data: List[Dict[str, Any]]
+    anomaly_report: Optional[Dict[str, Any]] = None
+    flight_time: Optional[int] = None
+
+
+class AnomalyClassification(BaseModel):
+    """Structured response for anomaly classification."""
+    rule_id: int = Field(description="The ID of the matched anomaly rule")
+    rule_name: str = Field(description="The name of the matched anomaly rule")
+    confidence: str = Field(description="Confidence level: High, Medium, or Low")
+    reasoning: str = Field(description="Brief explanation of why this rule was chosen")
 
 
 def parse_actions_from_response(response_text: str) -> List[Dict[str, Any]]:
@@ -370,6 +411,170 @@ saved_context = {"3d7211ef": """
                  }
 
 import time
+
+
+@router.post("/api/ai/classify")
+def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
+    """
+    Classify an anomaly flight and choose the most appropriate anomaly reason from predefined rules.
+    Uses Google Gemini with structured output to ensure consistent classification.
+    """
+    try:
+        logger.info(f"AI Classify request for flight {request.flight_id}")
+
+        # Extract callsign from flight data
+        callsign = None
+        if request.flight_data:
+            for p in request.flight_data:
+                if p.get("callsign"):
+                    callsign = p["callsign"]
+                    break
+
+        flight_time = request.flight_time
+        if not flight_time and request.flight_data:
+            flight_time = request.flight_data[0].get('timestamp')
+
+        # Load flight metadata from database instead of fetching
+        try:
+            from service.pg_provider import get_flight_metadata
+            flight_details = get_flight_metadata(request.flight_id, schema='research')
+            if not flight_details:
+                # Fallback to basic info if not in DB
+                flight_details = {
+                    "flight_id": request.flight_id,
+                    "callsign": callsign
+                }
+            else:
+                # Ensure callsign is set
+                if not flight_details.get('callsign') and callsign:
+                    flight_details['callsign'] = callsign
+        except Exception as e:
+            logger.warning(f"Could not load metadata from DB: {e}, using basic info")
+            flight_details = {
+                "flight_id": request.flight_id,
+                "callsign": callsign
+            }
+
+        # Build context
+        context_parts = []
+        flight_summary_text = _format_flight_summary_for_llm(flight_details, request.flight_data)
+        context_parts.append(flight_summary_text)
+
+        # Add time window
+        if request.flight_data and len(request.flight_data) >= 2:
+            ts0 = request.flight_data[0].get("timestamp")
+            ts1 = request.flight_data[-1].get("timestamp")
+            if ts0 and ts1:
+                try:
+                    iso0 = datetime.fromtimestamp(int(ts0), tz=timezone.utc).isoformat()
+                    iso1 = datetime.fromtimestamp(int(ts1), tz=timezone.utc).isoformat()
+                    context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0} ({iso0})\nEnd: {ts1} ({iso1})")
+                except Exception:
+                    context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0}\nEnd: {ts1}")
+
+        # Generate map image
+        map_image_base64 = None
+        image_bytes = None
+        mime_type = "image/png"
+        
+        if request.flight_data and len(request.flight_data) >= 2:
+            map_image_base64 = _generate_flight_map_image(request.flight_data)
+            if map_image_base64:
+                try:
+                    image_bytes = base64.b64decode(map_image_base64)
+                    logger.info("Generated and decoded map image for classification")
+                except Exception as e:
+                    logger.error(f"Failed to decode generated map: {e}")
+
+
+            report = request.anomaly_report
+
+            summary = report.get('summary', {})
+            if summary:
+                context_parts.append(f"Is Anomaly: {summary.get('is_anomaly', 'Unknown')}")
+                context_parts.append(f"Confidence Score: {summary.get('confidence_score', 'N/A')}%")
+                triggers = summary.get('triggers', [])
+                triggers = _rewrite_triggers_with_feedback(triggers, request.flight_id)
+                if triggers:
+                    context_parts.append(f"Triggers: {', '.join(triggers)}")
+
+            layer1 = report.get('layer_1_rules', {})
+            if layer1:
+                rules = layer1.get('report', {}).get('matched_rules', [])
+                if rules:
+                    context_parts.append("\nMatched Rules:")
+                    for rule in rules:
+                        rule_name = rule.get('name', f"Rule {rule.get('id')}")
+                        context_parts.append(f"  - {rule_name}")
+
+        # Add available anomaly rules
+        context_parts.append("\n=== AVAILABLE ANOMALY RULES ===")
+        context_parts.append("You must classify this flight using ONE of the following rules:")
+        for rule in RULES_METADATA:
+            context_parts.append(f"ID: {rule['id']} | Name: {rule['name']} | Description: {rule['description']} | Category: {rule['category']}")
+
+        context_parts.append("\n=== TASK ===")
+        if image_bytes:
+            context_parts.append("A map visualization of the flight path is attached. Use it to analyze the flight pattern visually.")
+        context_parts.append("Based on the flight data and map above, classify this anomaly by selecting the MOST PROBLEMATIC rule the flight violated from the list.")
+        context_parts.append("Consider the flight pattern, triggers, matched rules, and any unusual behavior visible in the map.")
+        context_parts.append("Provide your confidence level (High, Medium, or Low) and a brief reasoning for your choice.")
+
+        full_prompt_text = "\n".join(context_parts)
+
+        # Build Gemini request with structured output
+        parts = [_types.Part(text=full_prompt_text)]
+        
+        # Add map image if available
+        if image_bytes:
+            parts.append(
+                _types.Part(
+                    inline_data=_types.Blob(
+                        mime_type=mime_type,
+                        data=image_bytes
+                    )
+                )
+            )
+            logger.info("Added map image to Gemini classification request")
+
+        config = _types.GenerateContentConfig(
+            system_instruction="You are an expert aviation anomaly classifier. Analyze flight data and visual map carefully and select the most appropriate anomaly rule.",
+            response_mime_type="application/json",
+            response_schema=AnomalyClassification.model_json_schema(),
+        )
+
+        content = _types.Content(parts=parts)
+
+        logger.info("Calling Gemini API for anomaly classification...")
+        start_time = time.time()
+        response = _gemini_client.models.generate_content(
+            model="gemini-3-flash-preview",
+            config=config,
+            contents=[content]
+        )
+        logger.info(f"Gemini response time: {time.time() - start_time} seconds")
+        
+        # Extract and parse the response
+        response_text = extract_gemini_text(response)
+        
+        # Validate the response using Pydantic
+        classification = AnomalyClassification.model_validate_json(response_text)
+        
+        # Find the full rule details
+        matched_rule = next((r for r in RULES_METADATA if r['id'] == classification.rule_id), None)
+        
+        return {
+            "classification": classification.model_dump(),
+            "rule_details": matched_rule
+        }
+
+    except Exception as e:
+        logger.error(f"AI Classify endpoint error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/ai/analyze")
 def ai_analyze_endpoint(request: AIAnalyzeRequest):
     """
