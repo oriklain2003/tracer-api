@@ -103,46 +103,43 @@ class PostgreSQLConnectionPool:
         Context manager to get a connection from the pool.
         
         Ensures connections are always returned to the pool, even on exceptions.
-        Validates connection health before returning.
+        Optionally validates connection health (disabled by default to avoid extra
+        getconn() under load and double-putconn bugs when pool is exhausted).
         """
         if not self.__class__._initialized:
             raise RuntimeError("Connection pool not initialized")
         
         conn = None
         try:
-            # Get connection from pool
             conn = self._pool.getconn()
-            
-            # Validate connection is alive
+            # Only check if connection is obviously dead; skip SELECT 1 to avoid
+            # second getconn() under load (which could exhaust pool or double-put)
             if conn.closed:
-                logger.warning("Got closed connection from pool, getting new one")
                 self._pool.putconn(conn, close=True)
+                conn = None
                 conn = self._pool.getconn()
-            
-            # Test connection with simple query
-            try:
-                with conn.cursor() as test_cursor:
-                    test_cursor.execute("SELECT 1")
-            except Exception as e:
-                logger.warning(f"Connection health check failed, reconnecting: {e}")
-                self._pool.putconn(conn, close=True)
-                conn = self._pool.getconn()
-            
             yield conn
-            
         except psycopg2.OperationalError as e:
             logger.error(f"PostgreSQL operational error: {e}")
-            if conn:
-                self._pool.putconn(conn, close=True)
+            if conn is not None:
+                try:
+                    self._pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = None
             raise
         except Exception as e:
             logger.error(f"Error with PostgreSQL connection: {e}")
-            raise
-        finally:
-            # Always return connection to pool
             if conn is not None:
                 try:
-                    # Rollback any uncommitted transactions
+                    self._pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = None
+            raise
+        finally:
+            if conn is not None:
+                try:
                     if not conn.closed:
                         conn.rollback()
                     self._pool.putconn(conn)
@@ -150,7 +147,7 @@ class PostgreSQLConnectionPool:
                     logger.error(f"Error returning connection to pool: {e}")
                     try:
                         self._pool.putconn(conn, close=True)
-                    except:
+                    except Exception:
                         pass
     
     def close_all(self):

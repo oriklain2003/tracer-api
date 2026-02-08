@@ -221,6 +221,8 @@ def get_all_tubes(
         pool = get_pool()
         with pool.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Learned tubes can be large; allow 90s for full-table fetch when no filter
+                cursor.execute("SET LOCAL statement_timeout = '90000'")
                 # Build dynamic query
                 conditions = ["member_count >= %s"]
                 params = [min_member_count]

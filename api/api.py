@@ -564,6 +564,37 @@ def stop_monitor():
 
 
 # ============================================================================
+# FLIGHTS NEAR POINT (research.normal_tracks + flight_metadata)
+# ============================================================================
+
+@app.get("/api/flights/near-point")
+def flights_near_point_route(
+    lat: float,
+    lng: float,
+    radius: float = 5.0,
+    chunk_half_km: float = 2.0,
+    origin_airport: str | None = None,
+    destination_airport: str | None = None,
+    alt: float | None = None,
+    alt_band_ft: float = 1000.0,
+):
+    logger.info(f"flights_near_point_route: lat={lat}, lng={lng}, radius={radius}, chunk_half_km={chunk_half_km}, origin_airport={origin_airport}, destination_airport={destination_airport}, alt={alt}, alt_band_ft={alt_band_ft}")
+    """Flights that had a point within radius km of (lat,lng), with closest point and track chunk ±chunk_half_km.
+    Optional: origin_airport, destination_airport (filter by pair), alt ± alt_band_ft (ft)."""
+    try:
+        from scripts.flights_near_point import flights_near_point_with_chunks, chunk_to_summary
+        results = flights_near_point_with_chunks(
+            lat=lat, lng=lng, radius=radius, chunk_half_km=chunk_half_km,
+            origin_airport=origin_airport, destination_airport=destination_airport,
+            alt=alt, alt_band_ft=alt_band_ft,
+        )
+        return [chunk_to_summary(r["flight_id"], r["chunk"]) for r in results]
+    except Exception as e:
+        logger.error(f"flights_near_point failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -675,6 +706,7 @@ def root():
         "version": "2.0",
         "status": "running",
         "endpoints": {
+            "flights_near_point": "/api/flights/near-point",
             "monitor": "/api/monitor/*",
             "live": "/api/live/*",
             "feedback": "/api/feedback/*",

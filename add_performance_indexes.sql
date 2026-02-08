@@ -62,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_normal_tracks_flight_id
 CREATE INDEX IF NOT EXISTS idx_normal_tracks_flight_timestamp 
     ON research.normal_tracks(flight_id, timestamp);
 
+-- Spatial lookup for lat/lon bounding box (flights_near_point, geo queries)
+CREATE INDEX IF NOT EXISTS idx_normal_tracks_lat_lon 
+    ON research.normal_tracks(lat, lon);
+
 -- Anomaly tracks - used in unified track route
 CREATE INDEX IF NOT EXISTS idx_anomalies_tracks_flight_id 
     ON research.anomalies_tracks(flight_id);
@@ -72,6 +76,22 @@ CREATE INDEX IF NOT EXISTS idx_anomalies_tracks_flight_timestamp
 -- Flight metadata
 CREATE INDEX IF NOT EXISTS idx_research_metadata_flight_id 
     ON research.flight_metadata(flight_id);
+
+-- ============================================================================
+-- LEARNED TUBES (public schema) - composite indexes for get_all_tubes
+-- ============================================================================
+
+-- Filtered by origin + destination + member_count (union-tubes with both params)
+CREATE INDEX IF NOT EXISTS idx_learned_tubes_origin_dest_members 
+    ON learned_tubes(origin, destination, member_count DESC);
+
+-- Filtered by origin only
+CREATE INDEX IF NOT EXISTS idx_learned_tubes_origin_members 
+    ON learned_tubes(origin, member_count DESC);
+
+-- Filtered by destination only
+CREATE INDEX IF NOT EXISTS idx_learned_tubes_dest_members 
+    ON learned_tubes(destination, member_count DESC);
 
 -- ============================================================================
 -- ANALYZE TABLES
@@ -86,6 +106,7 @@ ANALYZE feedback.anomaly_reports;
 ANALYZE research.normal_tracks;
 ANALYZE research.anomalies_tracks;
 ANALYZE research.flight_metadata;
+ANALYZE learned_tubes;
 
 -- ============================================================================
 -- VERIFICATION
