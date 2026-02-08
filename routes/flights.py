@@ -593,6 +593,8 @@ def get_live_anomalies(start_ts: int, end_ts: int):
         return []
 
     try:
+        from core.airport_lookup import enrich_origin_destination
+        
         conn = sqlite3.connect(str(DB_LIVE_RESEARCH_PATH))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -645,6 +647,9 @@ def get_live_anomalies(start_ts: int, end_ts: int):
                 if report["summary"].get("aircraft_type") is None and aircraft_type:
                     report["summary"]["aircraft_type"] = aircraft_type
 
+            # Enrich airport data with place information
+            places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
+
             results.append({
                 "flight_id": row["flight_id"],
                 "timestamp": row["timestamp"],
@@ -656,6 +661,8 @@ def get_live_anomalies(start_ts: int, end_ts: int):
                 "airline": row["airline"],
                 "origin_airport": row["origin_airport"],
                 "destination_airport": row["destination_airport"],
+                "origin_place": places["origin_place"],
+                "destination_place": places["destination_place"],
                 "matched_rule_names": row["matched_rule_names"],
                 "matched_rule_ids": row["matched_rule_ids"],
                 "is_military": is_military,
@@ -767,6 +774,8 @@ def get_live_anomalies_since(ts: int):
         return {"anomalies": [], "count": 0}
 
     try:
+        from core.airport_lookup import enrich_origin_destination
+        
         conn = sqlite3.connect(str(DB_LIVE_RESEARCH_PATH))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -786,6 +795,9 @@ def get_live_anomalies_since(ts: int):
         
         anomalies = []
         for row in rows:
+            # Enrich airport data with place information
+            places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
+            
             anomalies.append({
                 "flight_id": row["flight_id"],
                 "timestamp": row["timestamp"],
@@ -796,6 +808,8 @@ def get_live_anomalies_since(ts: int):
                 "airline": row["airline"],
                 "origin_airport": row["origin_airport"],
                 "destination_airport": row["destination_airport"],
+                "origin_place": places["origin_place"],
+                "destination_place": places["destination_place"],
                 "matched_rule_names": row["matched_rule_names"],
                 "matched_rule_ids": row["matched_rule_ids"],
             })
