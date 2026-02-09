@@ -360,6 +360,7 @@ from routes.ai_routes import router as ai_router, configure as configure_ai
 from routes.route_planning import router as route_planning_router, configure as configure_route_planning
 from routes.trajectory_planner import router as trajectory_router, configure as configure_trajectory
 from routes.users import router as users_router, configure as configure_users
+from routes.manual_route_planner import router as manual_route_planner_router, configure as configure_manual_route_planner
 
 # Configure users router first (authentication and user management)
 configure_users(pg_pool=pg_pool)
@@ -442,6 +443,9 @@ configure_route_planning(
 # Configure trajectory planner
 configure_trajectory(project_root=PROJECT_ROOT)
 
+# Configure manual route planner
+configure_manual_route_planner(route_planner_instance=get_route_planner())
+
 # Include all routers used by prod-ui
 app.include_router(
     flights_router)  # /api/live/*, /api/research/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
@@ -475,6 +479,7 @@ def get_prod_spa(path: str):
 app.include_router(analytics_router)  # /api/stats/*, /api/intel/*
 app.include_router(ai_router)  # /api/ai/*
 app.include_router(route_planning_router)  # /api/route-check/*
+app.include_router(manual_route_planner_router)  # /api/route/manual/*
 app.include_router(trajectory_router)  # /api/trajectory/*
 app.include_router(users_router)  # /api/auth/*, /api/users/*
 
@@ -716,6 +721,7 @@ def root():
             "intelligence": "/api/intel/*",
             "ai": "/api/ai/*",
             "route_check": "/api/route-check/*",
+            "manual_route": "/api/route/manual/*",
             "trajectory": "/api/trajectory/*",
             "weather": "/api/weather/*",
             "rules": "/api/rules/*",

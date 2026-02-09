@@ -185,6 +185,7 @@ class ClassifyAnomalyRequest(BaseModel):
     flight_data: List[Dict[str, Any]]
     anomaly_report: Optional[Dict[str, Any]] = None
     flight_time: Optional[int] = None
+    custom_prompt: Optional[str] = None  # User-provided classification instructions
 
 
 class AnomalyClassification(BaseModel):
@@ -487,6 +488,8 @@ def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
                     logger.error(f"Failed to decode generated map: {e}")
 
 
+        if request.anomaly_report:
+            context_parts.append("\n=== ANOMALY ANALYSIS ===")
             report = request.anomaly_report
 
             summary = report.get('summary', {})
@@ -498,31 +501,114 @@ def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
                 if triggers:
                     context_parts.append(f"Triggers: {', '.join(triggers)}")
 
+            # Extract matched rules from layer_1_rules (matching data.json structure)
             layer1 = report.get('layer_1_rules', {})
-            if layer1:
-                rules = layer1.get('report', {}).get('matched_rules', [])
-                if rules:
-                    context_parts.append("\nMatched Rules:")
-                    for rule in rules:
-                        rule_name = rule.get('name', f"Rule {rule.get('id')}")
+            layer1_report = layer1.get('report', {})
+            matched_rules = layer1_report.get('matched_rules', [])
+            
+            # Add matched rules information
+            if matched_rules:
+                context_parts.append("\n=== MATCHED RULES ===")
+                for rule in matched_rules:
+                    rule_name = rule.get('name', f"Rule {rule.get('id')}")
+                    rule_summary = rule.get('summary', '')
+                    if rule_summary:
+                        context_parts.append(f"  - {rule_name}: {rule_summary}")
+                    else:
                         context_parts.append(f"  - {rule_name}")
-
-        # Add available anomaly rules
-        context_parts.append("\n=== AVAILABLE ANOMALY RULES ===")
-        context_parts.append("You must classify this flight using ONE of the following rules:")
-        for rule in RULES_METADATA:
-            context_parts.append(f"ID: {rule['id']} | Name: {rule['name']} | Description: {rule['description']} | Category: {rule['category']}")
+            
+            # Check for proximity events in matched rules
+            proximity_events = []
+            for rule in matched_rules:
+                # Check if this is a proximity rule (id 4 or name contains proximity/התקרבות)
+                is_proximity_rule = rule.get('id') == 4 or 'proximity' in str(rule.get('name', '')).lower() or 'התקרבות' in str(rule.get('name', ''))
+                if is_proximity_rule:
+                    events = rule.get('details', {}).get('events', [])
+                    if events:
+                        for event in events:
+                            if isinstance(event, dict):
+                                proximity_events.append(event)
+            
+            # Add prominent proximity alert section if there are proximity events
+            if proximity_events:
+                context_parts.append("\n=== ⚠️ PROXIMITY ALERT - THIS FLIGHT HAS PROXIMITY EVENTS ===")
+                
+                # Generate summary statistics
+                total_events = len(proximity_events)
+                other_aircraft = set()
+                distances = []
+                alt_diffs = []
+                
+                for event in proximity_events:
+                    callsign = event.get('other_callsign') or event.get('other_flight') or 'Unknown'
+                    if callsign != 'Unknown':
+                        other_aircraft.add(callsign)
+                    if event.get('distance_nm') is not None:
+                        try:
+                            distances.append(float(event['distance_nm']))
+                        except (ValueError, TypeError):
+                            pass
+                    if event.get('altitude_diff_ft') is not None:
+                        try:
+                            alt_diffs.append(float(event['altitude_diff_ft']))
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Summary section
+                context_parts.append("\nSUMMARY:")
+                context_parts.append(f"  Total proximity events: {total_events}")
+                context_parts.append(f"  Other aircraft involved: {', '.join(other_aircraft) if other_aircraft else 'Unknown'}")
+                if distances:
+                    context_parts.append(f"  Distance range: {min(distances):.1f} - {max(distances):.1f} NM (min: {min(distances):.1f} NM)")
+                if alt_diffs:
+                    context_parts.append(f"  Altitude diff range: {min(alt_diffs):.0f} - {max(alt_diffs):.0f} ft")
+                
+                # Sample up to 5 events (evenly distributed if more than 5)
+                if total_events <= 5:
+                    sampled_events = proximity_events
+                else:
+                    # Sample evenly: first, last, and 3 from middle
+                    indices = [0]
+                    step = (total_events - 1) / 4
+                    for i in range(1, 4):
+                        indices.append(int(i * step))
+                    indices.append(total_events - 1)
+                    sampled_events = [proximity_events[i] for i in indices]
+                
+                context_parts.append(f"\nSAMPLED EVENTS ({len(sampled_events)} of {total_events}):")
+                for i, event in enumerate(sampled_events, 1):
+                    other_callsign = event.get('other_callsign') or event.get('other_flight') or 'Unknown'
+                    other_flight_id = event.get('other_flight') or event.get('other_flight_id') or 'Unknown'
+                    distance_nm = event.get('distance_nm', 'Unknown')
+                    altitude_diff = event.get('altitude_diff_ft', 'Unknown')
+                    timestamp = event.get('timestamp', 'Unknown')
+                    
+                    context_parts.append(f"  #{i}: {other_callsign} | Dist: {distance_nm} NM | Alt Diff: {altitude_diff} ft | TS: {timestamp}")
+                
+                context_parts.append("\nWhen answering questions, consider these proximity events and the other aircraft involved.")
 
         context_parts.append("\n=== TASK ===")
         if image_bytes:
             context_parts.append("A map visualization of the flight path is attached. Use it to analyze the flight pattern visually.")
-        context_parts.append("Based on the flight data and map above, classify this anomaly by selecting the MOST PROBLEMATIC rule the flight violated from the list.")
-        context_parts.append("Consider the flight pattern, triggers, matched rules, and any unusual behavior visible in the map.")
-        context_parts.append("Provide your confidence level (High, Medium, or Low) and a brief reasoning for your choice.")
+        
+        # Check if custom prompt is provided
+        if request.custom_prompt:
+            # Use custom prompt provided by user - free-form analysis
+            context_parts.append("\n=== USER CLASSIFICATION INSTRUCTIONS ===")
+            context_parts.append(request.custom_prompt)
+            context_parts.append("\nBased on the flight data, map, and analysis above, provide your classification according to these instructions.")
+            context_parts.append("Analyze what you observe and describe what happened without being constrained to predefined categories.")
+            use_structured_output = False
+        else:
+            # Use predefined rules (backward compatibility)
+            context_parts.append("Based on the flight data and map above, classify this anomaly by selecting the MOST PROBLEMATIC rule the flight violated from the list.")
+            context_parts.append("Consider the flight pattern, triggers, matched rules, and any unusual behavior visible in the map.")
+            context_parts.append("Provide your confidence level (High, Medium, or Low) and a brief reasoning for your choice.")
+            use_structured_output = True
 
         full_prompt_text = "\n".join(context_parts)
 
-        # Build Gemini request with structured output
+        # Build Gemini request
         parts = [_types.Part(text=full_prompt_text)]
         
         # Add map image if available
@@ -537,14 +623,15 @@ def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
             )
             logger.info("Added map image to Gemini classification request")
 
+        # Configure based on whether using structured output or custom prompt
+
         config = _types.GenerateContentConfig(
-            system_instruction="You are an expert aviation anomaly classifier. Analyze flight data and visual map carefully and select the most appropriate anomaly rule.",
-            response_mime_type="application/json",
-            response_schema=AnomalyClassification.model_json_schema(),
+            system_instruction=request.custom_prompt,
+                        tools=[_types.Tool(google_search=_types.GoogleSearch()), {'code_execution': {}}]
+
         )
 
         content = _types.Content(parts=parts)
-
         logger.info("Calling Gemini API for anomaly classification...")
         start_time = time.time()
         response = _gemini_client.models.generate_content(
@@ -554,19 +641,27 @@ def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
         )
         logger.info(f"Gemini response time: {time.time() - start_time} seconds")
         
-        # Extract and parse the response
+        # Extract response
         response_text = extract_gemini_text(response)
         
-        # Validate the response using Pydantic
-        classification = AnomalyClassification.model_validate_json(response_text)
-        
-        # Find the full rule details
-        matched_rule = next((r for r in RULES_METADATA if r['id'] == classification.rule_id), None)
-        
-        return {
-            "classification": classification.model_dump(),
-            "rule_details": matched_rule
-        }
+        # Return based on output type
+        if use_structured_output:
+            # Validate the response using Pydantic
+            classification = AnomalyClassification.model_validate_json(response_text)
+            
+            # Find the full rule details
+            matched_rule = next((r for r in RULES_METADATA if r['id'] == classification.rule_id), None)
+            
+            return {
+                "classification": classification.model_dump(),
+                "rule_details": matched_rule
+            }
+        else:
+            # Return free-form classification based on custom prompt
+            return {
+                "classification": response_text,
+                "custom_prompt": request.custom_prompt
+            }
 
     except Exception as e:
         logger.error(f"AI Classify endpoint error: {e}")
@@ -650,7 +745,10 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
                     context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0} ({iso0})\nEnd: {ts1} ({iso1})")
                 except Exception:
                     context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0}\nEnd: {ts1}")
-
+        
+        # Track proximity aircraft for map generation
+        proximity_flight_ids = set()
+        
         if request.anomaly_report:
             context_parts.append("\n=== ANOMALY ANALYSIS ===")
             report = request.anomaly_report
@@ -700,6 +798,12 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
                     callsign = event.get('other_callsign') or event.get('other_flight') or 'Unknown'
                     if callsign != 'Unknown':
                         other_aircraft.add(callsign)
+                    
+                    # Collect flight IDs for map generation
+                    other_flight_id = event.get('other_flight') or event.get('other_flight_id')
+                    if other_flight_id and other_flight_id != 'Unknown':
+                        proximity_flight_ids.add(other_flight_id)
+                    
                     if event.get('distance_nm') is not None:
                         try:
                             distances.append(float(event['distance_nm']))
@@ -749,6 +853,10 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
             # Filter out events already covered from anomaly_report
             new_prox_events = []
             for prox in request.proximity_context:
+                # Collect flight IDs for map generation
+                if prox.other_flight_id and prox.other_flight_id != 'Unknown':
+                    proximity_flight_ids.add(prox.other_flight_id)
+                
                 if proximity_events:
                     already_covered = any(
                         e.get('other_flight') == prox.other_flight_id or 
@@ -829,27 +937,52 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
 
         system_instruction_reasoning = (
             "Give a good comprehensive answer. "
-            "Keep in mind the system can be wrong."
+            # "Keep in mind the system can be wrong."
             "Allways answer in hebrew."
+            "Try to add to the answer something that the user didnt think of and will be suprised by"
             "The system summery is llm that reasoned about the data and made research, trust it and build the answer around it" if additional_data else ""
             "Always include 2–4 plausible explanations or details the user might not have considered.\n\n"
-            "## MAP HIGHLIGHTING ACTIONS\n"
-            "When you want to point to something on the map, output a JSON action block.\n\n"
-            "Available Actions:\n"
-            '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
-            '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
-            "Use AT MOST one or two actions per response."
+            # "## MAP HIGHLIGHTING ACTIONS\n"
+            # "When you want to point to something on the map, output a JSON action block.\n\n"
+            # "Available Actions:\n"
+            # '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
+            # '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
+            # "Use AT MOST one or two actions per response."
         )
 
         system_instruction_fast = (
-            "Keep in mind the system can be wrong."
+            # "Keep in mind the system can be wrong."
             "Allways answer in hebrew."
             "Answer shortly and to the point."
-            "Available Actions:\n"
-            '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
-            '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
-            "Use AT MOST one or two actions per response."
+            # "Available Actions:\n"
+            # '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
+            # '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
+            # "Use AT MOST one or two actions per response."
         )
+        
+        # Generate flight maps for proximity aircraft
+        proximity_maps = {}
+        if proximity_flight_ids:
+            logger.info(f"Generating maps for {len(proximity_flight_ids)} proximity aircraft: {proximity_flight_ids}")
+            for other_flight_id in proximity_flight_ids:
+                try:
+                    # Fetch track data for the proximity aircraft
+                    track_data = _get_unified_track(other_flight_id)
+                    points = track_data.get("points", []) if track_data else []
+                    
+                    if points and len(points) >= 2:
+                        # Generate map image
+                        map_base64 = _generate_flight_map_image(points)
+                        if map_base64:
+                            proximity_maps[other_flight_id] = map_base64
+                            logger.info(f"Generated map for proximity aircraft {other_flight_id}")
+                        else:
+                            logger.warning(f"Failed to generate map for proximity aircraft {other_flight_id}")
+                    else:
+                        logger.warning(f"Insufficient track points for proximity aircraft {other_flight_id}: {len(points) if points else 0} points")
+                except Exception as e:
+                    logger.error(f"Error generating map for proximity aircraft {other_flight_id}: {e}")
+        
         # Build Gemini request
         parts = [_types.Part(text=full_prompt_text)]
 
@@ -862,18 +995,46 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
                     )
                 )
             )
-        system_instruction = system_instruction_fast if request.mode == "fast" else system_instruction_reasoning
+        
+        # Add proximity aircraft maps to Gemini request
+        if proximity_maps:
+            logger.info(f"Adding {len(proximity_maps)} proximity aircraft maps to Gemini request")
+            for flight_id, map_base64 in proximity_maps.items():
+                try:
+                    map_bytes = base64.b64decode(map_base64)
+                    parts.append(
+                        _types.Part(
+                            inline_data=_types.Blob(
+                                mime_type="image/png",
+                                data=map_bytes
+                            )
+                        )
+                    )
+                    # Add a text part labeling this image
+                    parts.insert(-1, _types.Part(text=f"\n[Map of proximity aircraft: {flight_id}]"))
+                    logger.info(f"Added map image for proximity aircraft {flight_id}")
+                except Exception as e:
+                    logger.error(f"Failed to add map for proximity aircraft {flight_id}: {e}")
+                    
+        tools = []
+        if request.mode != "on-prem":
+            tools.append(_types.Tool(google_search=_types.GoogleSearch()))
+            tools.append({'code_execution': {}})
+        
+        system_instruction = system_instruction_fast if request.mode in ["fast", "on-prem"] else system_instruction_reasoning
+        full_system_instruction = system_instruction
+        if request.mode != "on-prem":
+            full_system_instruction += """ CRITICAL INSTRUCTION: 
+            1. For any calculations, ALWAYS use the code execution tool. 
+            2. Do not perform math 'in-head'. Write Python code to solve the formula and present the result. """
         config = _types.GenerateContentConfig(
-            system_instruction=system_instruction + """ CRITICAL INSTRUCTION: 
-1. For any calculations, ALWAYS use the code execution tool. 
-2. Do not perform math 'in-head'. Write Python code to solve the formula and present the result. """,
-            tools=[_types.Tool(google_search=_types.GoogleSearch()), {'code_execution': {}}]
+            system_instruction=full_system_instruction ,
+            tools=tools
         )
 
         content = _types.Content(parts=parts)
-
         # Select model based on mode: fast uses gemini-2.5-flash, thinking uses gemini-3-pro-preview
-        model_name = "gemini-3-flash-preview" if request.mode == "fast" else "gemini-3-pro-preview"
+        model_name = "gemini-3-flash-preview" if request.mode in ["fast", "on-prem"] else "gemini-3-pro-preview"
         logger.info(f"Calling Gemini API with model: {model_name} (mode: {request.mode})...")
         start_time = time.time()
         response = _gemini_client.models.generate_content(
@@ -882,6 +1043,7 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
             contents=[content]
         )
         logger.info(f"Gemini response time: {time.time() - start_time} seconds")
+        
         ai_response = extract_gemini_text(response)
         
 

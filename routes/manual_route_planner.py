@@ -306,12 +306,8 @@ def detect_proximity_for_planning(
     Returns: (proximity_points, proximity_report)
     """
     # Import dependencies
-    try:
-        from service.routes.route_planning import predict_aircraft_path_unified
-        from service.route_planner import TrafficAircraft
-    except ImportError:
-        from routes.route_planning import predict_aircraft_path_unified
-        from route_planner import TrafficAircraft
+    from routes.route_planning import predict_aircraft_path_unified
+    from service.route_planner import TrafficAircraft
     
     vertical_ft = proximity_thresholds.get("vertical_ft", DEFAULT_VERTICAL_FT)
     horizontal_nm = proximity_thresholds.get("horizontal_nm", DEFAULT_HORIZONTAL_NM)
@@ -452,10 +448,7 @@ async def plan_manual_route(request: ManualRouteRequest):
     # Get route planner (for path prediction)
     global _route_planner
     if _route_planner is None:
-        try:
-            from service.route_planner import get_route_planner
-        except ImportError:
-            from route_planner import get_route_planner
+        from service.route_planner import get_route_planner
         _route_planner = get_route_planner()
     
     # ============================================================
@@ -627,10 +620,7 @@ async def get_traffic_for_planning():
     """Get current traffic data for route planning."""
     global _route_planner
     if _route_planner is None:
-        try:
-            from service.route_planner import get_route_planner
-        except ImportError:
-            from route_planner import get_route_planner
+        from service.route_planner import get_route_planner
         _route_planner = get_route_planner()
     
     # Fetch traffic if cache is empty (force=False will use cache if available)
@@ -667,10 +657,7 @@ async def refresh_traffic():
     """Force refresh traffic data from FR24."""
     global _route_planner
     if _route_planner is None:
-        try:
-            from service.route_planner import get_route_planner
-        except ImportError:
-            from route_planner import get_route_planner
+        from service.route_planner import get_route_planner
         _route_planner = get_route_planner()
     
     traffic = _route_planner.traffic_manager.fetch_live_traffic(force_refresh=True)
@@ -718,19 +705,12 @@ async def simulate_route(request: SimulationRequest):
     """
     global _route_planner
     if _route_planner is None:
-        try:
-            from service.route_planner import get_route_planner
-        except ImportError:
-            from route_planner import get_route_planner
+        from service.route_planner import get_route_planner
         _route_planner = get_route_planner()
     
     # Import dependencies
-    try:
-        from service.routes.route_planning import predict_aircraft_path_unified
-        from service.route_planner import TrafficAircraft
-    except ImportError:
-        from routes.route_planning import predict_aircraft_path_unified
-        from route_planner import TrafficAircraft
+    from routes.route_planning import predict_aircraft_path_unified
+    from service.route_planner import TrafficAircraft
     
     planned_path = request.planned_path
     traffic_data = request.traffic

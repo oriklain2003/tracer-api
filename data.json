@@ -1,0 +1,232 @@
+{
+    "flight_id": "3cf959dd",
+
+    "anomaly_report": {
+        "summary": {
+            "callsign": "ISR727",
+            "triggers": [
+                "Rules",
+                "XGBoost"
+            ],
+            "flight_id": "3cf959dd",
+            "is_anomaly": true,
+            "num_points": 1291,
+
+            "confidence_score": 100
+        },
+        "layer_1_rules": {
+            "report": {
+                "flight_id": "3cf959dd",
+                "evaluations": [
+                    {
+                        "id": 1,
+                        "name": "\u05e9\u05d9\u05e0\u05d5\u05d9 \u05e7\u05d5\u05d3 \u05d8\u05e8\u05e0\u05e1\u05e4\u05d5\u05e0\u05d3\u05e8 (Squawk)",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": false,
+                        "summary": "No emergency squawk detected",
+                        "category": "emergency_squawk",
+                        "severity": 5,
+                        "definition": "\u05e9\u05d9\u05d3\u05d5\u05e8 \u05e7\u05d5\u05d3 \u05d7\u05d9\u05e8\u05d5\u05dd \u05d9\u05d9\u05e2\u05d5\u05d3\u05d9 \u05d1\u05d0\u05de\u05e6\u05e2 \u05d8\u05d9\u05e1\u05d4 (\u05db\u05d2\u05d5\u05df 7500, 7600, 7700).",
+                        "operational_significance": "\u05de\u05e6\u05d1 \u05d7\u05d9\u05e8\u05d5\u05dd \u05de\u05d9\u05d9\u05d3\u05d9/\u05d7\u05e9\u05d3 \u05dc\u05d7\u05d8\u05d9\u05e4\u05d4: \u05d3\u05d5\u05e8\u05e9 \u05ea\u05d2\u05d5\u05d1\u05ea \u05d9\u05d9\u05e8\u05d5\u05d8/\u05e1\u05d9\u05d5\u05e2 \u05de\u05d9\u05d9\u05d3\u05d9\u05ea \u05d5\u05e1\u05d2\u05d9\u05e8\u05ea \u05de\u05e8\u05d7\u05d1 \u05d0\u05d5\u05d5\u05d9\u05e8\u05d9."
+                    },
+                    {
+                        "id": 2,
+                        "name": "\u05e9\u05d9\u05e0\u05d5\u05d9 \u05d2\u05d5\u05d1\u05d4 \u05e7\u05d9\u05e6\u05d5\u05e0\u05d9",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": false,
+                        "summary": "Altitude profile nominal",
+                        "category": "flight_dynamics",
+                        "severity": 5,
+                        "definition": "\u05e9\u05d9\u05e0\u05d5\u05d9 \u05d2\u05d5\u05d1\u05d4 \u05d7\u05e8\u05d9\u05e3, \u05de\u05d4\u05d9\u05e8 \u05d5\u05d1\u05dc\u05ea\u05d9 \u05de\u05ea\u05d5\u05db\u05e0\u05df \u05d1\u05d6\u05de\u05df \u05e9\u05d9\u05d5\u05d8 (Cruise).",
+                        "operational_significance": "\u05db\u05e9\u05dc \u05de\u05d1\u05e0\u05d9/\u05de\u05db\u05d0\u05e0\u05d9 \u05d7\u05de\u05d5\u05e8: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05d0\u05d5\u05d1\u05d3\u05df \u05e9\u05dc\u05d9\u05d8\u05d4, \u05d1\u05e2\u05d9\u05d9\u05ea \u05d3\u05d9\u05d7\u05d5\u05e1, \u05d0\u05d5 \u05ea\u05de\u05e8\u05d5\u05df \u05d4\u05ea\u05d7\u05de\u05e7\u05d5\u05ea \u05e7\u05d9\u05e6\u05d5\u05e0\u05d9."
+                    },
+                    {
+                        "id": 3,
+                        "name": "\u05d1\u05d9\u05e6\u05d5\u05e2 \u05e4\u05e0\u05d9\u05d9\u05d4 180\u00b0 \u05d0\u05d5 360\u00b0",
+                        "details": {
+                            "events": []
+                        },  
+                        "matched": true,
+                        "summary": "Abrupt heading change or holding pattern observed",
+                        "category": "heading_manoeuvre",
+                        "severity": 4,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05d4\u05de\u05d1\u05e6\u05e2 \u05e1\u05d1\u05d1 \u05e9\u05dc\u05dd \u05d0\u05d5 \u05d7\u05e6\u05d9 \u05e1\u05d1\u05d1 \u05d7\u05d6\u05e7 \u05d1\u05de\u05e7\u05d5\u05dd \u05d1\u05de\u05e8\u05d7\u05d1 \u05d0\u05d5\u05d5\u05d9\u05e8\u05d9 \u05e4\u05ea\u05d5\u05d7, \u05e9\u05dc\u05d0 \u05d1\u05d0\u05d6\u05d5\u05e8 \u05d4\u05de\u05ea\u05e0\u05d4 \u05de\u05d5\u05d2\u05d3\u05e8.",
+                        "operational_significance": "\u05d4\u05e4\u05e8\u05ea \u05e0\u05d5\u05d4\u05dc \u05d7\u05de\u05d5\u05e8\u05d4/\u05d7\u05e9\u05d3 \u05dc\u05e8\u05d9\u05d2\u05d5\u05dc: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05db\u05e9\u05dc \u05d1\u05e0\u05d9\u05d5\u05d5\u05d8, \u05d0\u05d5 \u05e0\u05d9\u05e1\u05d9\u05d5\u05df \u05de\u05db\u05d5\u05d5\u05df \u05dc\u05d4\u05d9\u05db\u05e0\u05e1/\u05dc\u05e6\u05d0\u05ea \u05de\u05d0\u05d6\u05d5\u05e8 \u05d0\u05e1\u05d5\u05e8."
+                    },
+                    {
+                        "id": 4,
+                        "name": "\u05d4\u05ea\u05e7\u05e8\u05d1\u05d5\u05ea \u05de\u05e1\u05d5\u05db\u05e0\u05ea",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": false,
+                        "summary": "No proximity conflicts",
+                        "category": "loss_of_separation",
+                        "severity": 5,
+                        "definition": "\u05e9\u05e0\u05d9 \u05db\u05dc\u05d9 \u05d8\u05d9\u05e1 \u05de\u05ea\u05e7\u05e8\u05d1\u05d9\u05dd \u05d6\u05d4 \u05dc\u05d6\u05d4 \u05dc\u05e4\u05d7\u05d5\u05ea \u05de-5 \u05de\u05d9\u05d9\u05dc \u05d0\u05d5\u05e4\u05e7\u05d9 \u05d5\u05e4\u05d7\u05d5\u05ea \u05de-2,000 \u05e8\u05d2\u05dc \u05d0\u05e0\u05db\u05d9.",
+                        "operational_significance": "\u05e1\u05db\u05e0\u05ea \u05d4\u05ea\u05e0\u05d2\u05e9\u05d5\u05ea \u05de\u05d9\u05d9\u05d3\u05d9\u05ea: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05db\u05e9\u05dc \u05e7\u05e8\u05d9\u05d8\u05d9 \u05d1\u05e4\u05d9\u05e7\u05d5\u05d7 \u05d4\u05d8\u05d9\u05e1\u05d4 (ATC) \u05d0\u05d5 \u05d1\u05de\u05e2\u05e8\u05db\u05d5\u05ea \u05d4\u05d4\u05ea\u05e8\u05e2\u05d4 (TCAS) \u05e9\u05dc \u05d4\u05de\u05d8\u05d5\u05e1\u05d9\u05dd."
+                    },
+                    {
+                        "id": 5,
+                        "name": "\u05d7\u05e8\u05d9\u05d2\u05ea \u05db\u05dc\u05d9 \u05d8\u05d9\u05e1 \u05de\u05e0\u05ea\u05d9\u05d1 \u05d8\u05d9\u05e1\u05d4",
+                        "details": {},
+                        "matched": false,
+                        "summary": "Rule not implemented",
+                        "category": "route_deviation",
+                        "severity": 3,
+                        "definition": "\u05e1\u05d8\u05d9\u05d9\u05d4 \u05e9\u05dc \u05db-10 \u05de\u05d9\u05d9\u05dc \u05d0\u05d5 \u05d9\u05d5\u05ea\u05e8 \u05de\u05d4\u05e0\u05ea\u05d9\u05d1 \u05d4\u05de\u05ea\u05d5\u05db\u05e0\u05df \u05d4\u05de\u05d0\u05d5\u05e9\u05e8 (AWY).",
+                        "operational_significance": "\u05d4\u05e4\u05e8\u05ea \u05de\u05e8\u05d7\u05d1 \u05d0\u05d5\u05d5\u05d9\u05e8\u05d9: \u05d4\u05d5\u05e4\u05da \u05dc\u05d0\u05e0\u05d5\u05de\u05dc\u05d9\u05d4 \u05e7\u05e8\u05d9\u05d8\u05d9\u05ea \u05db\u05d0\u05e9\u05e8 \u05d4\u05d5\u05d0 \u05de\u05d5\u05d1\u05d9\u05dc \u05dc\u05e7\u05e8\u05d1\u05d4 \u05de\u05e1\u05d5\u05db\u05e0\u05ea \u05dc\u05d0\u05d6\u05d5\u05e8\u05d9\u05dd \u05d0\u05e1\u05d5\u05e8\u05d9\u05dd (\u05e6\u05d1\u05d0/\u05de\u05ea\u05e7\u05e0\u05d9\u05dd \u05e8\u05d2\u05d9\u05e9\u05d9\u05dd)."
+                    },
+                    {
+                        "id": 6,
+                        "name": "\u05d4\u05dc\u05d9\u05db\u05d4 \u05e1\u05d1\u05d9\u05d1 (Go-Around)",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": false,
+                        "summary": "No go-around patterns",
+                        "category": "airport_operations",
+                        "severity": 3,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05e9\u05e0\u05d9\u05e1\u05d4 \u05dc\u05e0\u05d7\u05d5\u05ea, \u05d1\u05d9\u05d8\u05dc \u05d0\u05ea \u05d4\u05e0\u05d7\u05d9\u05ea\u05d4 \u05d5\u05d4\u05de\u05e8\u05d9\u05d0 \u05e9\u05d5\u05d1, \u05dc\u05d0\u05d7\u05e8 \u05e9\u05db\u05d1\u05e8 \u05d4\u05d7\u05dc \u05d1\u05ea\u05d4\u05dc\u05d9\u05da \u05d4\u05e0\u05de\u05db\u05d4 \u05e1\u05d5\u05e4\u05d9.",
+                        "operational_significance": "\u05db\u05e9\u05dc \u05d1\u05d8\u05d9\u05d7\u05d5\u05ea\u05d9 \u05d0\u05d5 \u05ea\u05e4\u05e2\u05d5\u05dc\u05d9 \u05d1\u05e0\u05de\u05dc \u05d4\u05ea\u05e2\u05d5\u05e4\u05d4: \u05d3\u05d5\u05e8\u05e9 \u05e0\u05d9\u05ea\u05d5\u05d7 \u05de\u05d9\u05d9\u05d3\u05d9 \u05e9\u05dc \u05d4\u05e1\u05d9\u05d1\u05d4 (\u05e8\u05d5\u05d7 \u05d2\u05d6\u05d5\u05e8\u05d4, \u05db\u05e9\u05dc \u05d1\u05de\u05e2\u05e8\u05db\u05d5\u05ea) \u05d5\u05e1\u05d2\u05d9\u05e8\u05ea \u05de\u05e1\u05dc\u05d5\u05dc."
+                    },
+                    {
+                        "id": 7,
+                        "name": "\u05d8\u05d9\u05e1\u05d4 \u05e9\u05d4\u05de\u05e8\u05d9\u05d0\u05d4 \u05d5\u05d7\u05d6\u05e8\u05d4 \u05dc\u05e0\u05d7\u05d9\u05ea\u05d4",
+                        "details": {},
+                        "matched": false,
+                        "summary": "No immediate return detected",
+                        "category": "return_to_field",
+                        "severity": 4,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05d4\u05de\u05de\u05e8\u05d9\u05d0 \u05d5\u05de\u05ea\u05d7\u05d9\u05dc \u05d4\u05dc\u05d9\u05da \u05e0\u05d7\u05d9\u05ea\u05d4 \u05de\u05d9\u05d9\u05d3\u05d9 (\u05ea\u05d5\u05da \u05e4\u05d7\u05d5\u05ea \u05de-10 \u05d3\u05e7\u05d5\u05ea), \u05d1\u05d8\u05e8\u05dd \u05e1\u05d9\u05d9\u05dd \u05d0\u05ea \u05e9\u05dc\u05d1 \u05d4\u05d8\u05d9\u05e4\u05d5\u05e1 \u05d4\u05e8\u05d0\u05e9\u05d5\u05e0\u05d9.",
+                        "operational_significance": "\u05db\u05e9\u05dc \u05de\u05db\u05d0\u05e0\u05d9 \u05e7\u05e8\u05d9\u05d8\u05d9: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05ea\u05e7\u05dc\u05d4 \u05d7\u05de\u05d5\u05e8\u05d4 \u05e9\u05d4\u05ea\u05d2\u05dc\u05ea\u05d4 \u05de\u05d9\u05d3 \u05dc\u05d0\u05d7\u05e8 \u05d4\u05d4\u05de\u05e8\u05d0\u05d4. \u05d3\u05d5\u05e8\u05e9 \u05e4\u05e8\u05d9\u05e1\u05ea \u05db\u05d5\u05d7\u05d5\u05ea \u05d4\u05e6\u05dc\u05d4 \u05d5\u05db\u05d5\u05e0\u05e0\u05d5\u05ea \u05d1\u05e9\u05d3\u05d4 \u05d4\u05ea\u05e2\u05d5\u05e4\u05d4."
+                    },
+                    {
+                        "id": 8,
+                        "name": "\u05e0\u05d7\u05d9\u05ea\u05d4 \u05d1\u05d9\u05e2\u05d3 \u05d0\u05d7\u05e8 (Diversion)",
+                        "details": {},
+                        "matched": false,
+                        "summary": "No planned destination provided",
+                        "category": "diversion",
+                        "severity": 3,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05d4\u05e0\u05d5\u05d7\u05ea \u05d1\u05e9\u05d3\u05d4 \u05ea\u05e2\u05d5\u05e4\u05d4 \u05d0\u05d7\u05e8 \u05de\u05d4\u05de\u05ea\u05d5\u05db\u05e0\u05df, \u05dc\u05d0\u05d7\u05e8 \u05e9\u05db\u05d1\u05e8 \u05d4\u05d9\u05d4 \u05d1\u05d0\u05d5\u05d5\u05d9\u05e8.",
+                        "operational_significance": "\u05db\u05e9\u05dc \u05de\u05e2\u05e8\u05db\u05ea\u05d9/\u05de\u05d6\u05d2 \u05d0\u05d5\u05d5\u05d9\u05e8 \u05d7\u05e8\u05d9\u05d2: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05ea\u05e0\u05d0\u05d9 \u05de\u05d6\u05d2 \u05d0\u05d5\u05d5\u05d9\u05e8 \u05d1\u05dc\u05ea\u05d9 \u05d0\u05e4\u05e9\u05e8\u05d9\u05d9\u05dd \u05d1\u05d9\u05e2\u05d3 \u05d4\u05de\u05e7\u05d5\u05e8\u05d9, \u05d0\u05d5 \u05e2\u05dc \u05de\u05e6\u05d1 \u05d7\u05d9\u05e8\u05d5\u05dd \u05e8\u05e4\u05d5\u05d0\u05d9/\u05d8\u05db\u05e0\u05d9 \u05d1\u05de\u05d4\u05dc\u05da \u05d4\u05d8\u05d9\u05e1\u05d4."
+                    },
+                    {
+                        "id": 9,
+                        "name": "\u05d8\u05d9\u05e1\u05d4 \u05de\u05ea\u05d7\u05ea \u05dc\u05d2\u05d5\u05d1\u05d4 \u05de\u05d9\u05e0\u05d9\u05de\u05dc\u05d9",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": false,
+                        "summary": "Altitude remained above minima",
+                        "category": "low_altitude",
+                        "severity": 4,
+                        "definition": "\u05db\u05dc\u05d9 \u05d8\u05d9\u05e1 \u05d4\u05d8\u05e1 \u05de\u05ea\u05d7\u05ea \u05dc\u05d2\u05d5\u05d1\u05d4 \u05d4\u05de\u05d5\u05ea\u05e8 \u05dc\u05e0\u05ea\u05d9\u05d1 \u05d4\u05d8\u05d9\u05e1\u05d4 \u05d0\u05d5 \u05d4\u05de\u05e8\u05d7\u05d1 \u05d4\u05d0\u05d5\u05d5\u05d9\u05e8\u05d9 \u05e9\u05d1\u05d5 \u05d4\u05d5\u05d0 \u05e0\u05de\u05e6\u05d0, \u05e9\u05dc\u05d0 \u05d1\u05e9\u05dc\u05d1 \u05e0\u05d7\u05d9\u05ea\u05d4.",
+                        "operational_significance": "\u05e1\u05db\u05e0\u05ea \u05d4\u05ea\u05e0\u05d2\u05e9\u05d5\u05ea \u05d1\u05e7\u05e8\u05e7\u05e2/\u05d0\u05d9\u05d5\u05dd LSS: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05db\u05e9\u05dc \u05d1\u05d2\u05d5\u05d1\u05d4 \u05d0\u05d5 \u05e0\u05d9\u05e1\u05d9\u05d5\u05df \u05de\u05db\u05d5\u05d5\u05df \u05dc\u05d4\u05d9\u05de\u05e0\u05e2 \u05de\u05d2\u05d9\u05dc\u05d5\u05d9 \u05de\u05db\"\u05dd."
+                    },
+                    {
+                        "id": 10,
+                        "name": "\u05d0\u05d5\u05d1\u05d3\u05df \u05d0\u05d5\u05ea \u05d7\u05d5\u05d6\u05e8 \u05d5\u05e0\u05e9\u05e0\u05d4",
+                        "details": {},
+                        "matched": false,
+                        "summary": "Rule not implemented",
+                        "category": "signal_integrity",
+                        "severity": 3,
+                        "definition": "\u05d8\u05e8\u05e7 \u05d0\u05e9\u05e8 \u05d0\u05d5\u05ea \u05d4-ADS-B \u05e9\u05dc\u05d5 \u05e0\u05e2\u05dc\u05dd \u05d5\u05de\u05d5\u05e4\u05d9\u05e2 \u05dc\u05e1\u05d9\u05e8\u05d5\u05d2\u05d9\u05df \u05d1\u05d0\u05d5\u05e4\u05df \u05d7\u05e8\u05d9\u05d2 \u05d1\u05de\u05d9\u05e7\u05d5\u05de\u05d9\u05dd \u05d2\u05d9\u05d0\u05d5\u05d2\u05e8\u05e4\u05d9\u05d9\u05dd \u05e7\u05d1\u05d5\u05e2\u05d9\u05dd.",
+                        "operational_significance": "\u05d7\u05e9\u05d3 \u05dc\u05e9\u05d9\u05d1\u05d5\u05e9/\u05d4\u05ea\u05d7\u05de\u05e7\u05d5\u05ea \u05de\u05db\u05d5\u05d5\u05e0\u05ea: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05e9\u05d9\u05de\u05d5\u05e9 \u05de\u05db\u05d5\u05d5\u05df \u05d1\u05e9\u05d8\u05d7 \u05de\u05ea \u05d8\u05d5\u05e4\u05d5\u05d2\u05e8\u05e4\u05d9 \u05d0\u05d5 \u05e9\u05d9\u05d1\u05d5\u05e9 \u05d0\u05dc\u05e7\u05d8\u05e8\u05d5\u05e0\u05d9."
+                    },
+                    {
+                        "id": 11,
+                        "name": "\u05dc\u05de\u05d9\u05d3\u05ea \u05e0\u05ea\u05d9\u05d1\u05d9 \u05d8\u05d9\u05e1\u05d4 (DBSCAN)",
+                        "details": {},
+                        "matched": false,
+                        "summary": "Rule not implemented",
+                        "category": "path_learning",
+                        "severity": 3,
+                        "definition": "\u05de\u05d1\u05d5\u05e1\u05e1 \u05e2\u05dc \u05d4\u05e9\u05d9\u05d7\u05d4 \u05e2\u05dd ChatGPT:\n1. \"\u05d0\u05d6 \u05db\u05db\u05d4, \u05d0\u05e0\u05d9 \u05dc\u05d0 \u05d9\u05d5\u05d3\u05e2 \u05d0\u05dd \u05d0\u05ea\u05d4 \u05d6\u05d5\u05db\u05e8 \u05d0\u05ea \u05d4\u05e7\u05d5\u05d3, \u05d0\u05d1\u05dc \u05d1\u05d2\u05d3\u05d5\u05dc \u05d0\u05e0\u05d9 \u05d2\u05dd \u05e8\u05d5\u05e6\u05d4 \u05dc\u05e2\u05e9\u05d5\u05ea \u05d0\u05d5\u05e4\u05e6\u05d9\u05d4 \u05e9\u05d0\u05e0\u05d9 \u05d0\u05d5\u05db\u05dc \u05dc\u05d1\u05e0\u05d5\u05ea \u05e0\u05ea\u05d9\u05d1\u05d9 \u05d8\u05d9\u05e1\u05d4 \u05de\u05db\u05dc \u05d4\u05d3\u05d0\u05d8\u05d4 \u05e9\u05d9\u05e9 \u05dc\u05d9, \u05d5\u05d0\u05d6 \u05dc\u05d6\u05d4\u05d5\u05ea \u05d2\u05dd \u05de\u05d4\u05dd \u05d7\u05e8\u05d2\u05d5\u05ea...\"\n2. \"\u05d5\u05d0\u05e0\u05d9 \u05e8\u05d5\u05e6\u05d4 \u05dc\u05d1\u05e0\u05d5\u05ea \u05de\u05e1\u05dc\u05d5\u05dc\u05d9 \u05d8\u05d9\u05e1\u05d4 \u05de\u05d4\u05dd.\"\n3. \"\u05d0\u05d9\u05da \u05e0\u05e2\u05e9\u05d4 \u05d0\u05ea \u05d6\u05d4?... \u05ea\u05d7\u05e4\u05e9 \u05dc\u05d9 \u05db\u05dc \u05de\u05d9\u05e0\u05d9 \u05d3\u05d5\u05d2\u05de\u05d0\u05d5\u05ea \u05d1\u05d2\u05d5\u05d2\u05dc...\"\n4. \"\u05d0\u05e7\u05e1\u05e4\u05d9\u05d9\u05df \u05dc\u05d9 \u05de\u05d4 \u05d6\u05d4 DBSCAN.\"\n5. \"\u05d0\u05d5\u05e7\u05d9\u05d9, \u05d1\u05d5\u05d0\u05d5 \u05e0\u05e0\u05e1\u05d4 \u05dc\u05d4\u05e8\u05d0\u05d5\u05ea \u05d0\u05ea \u05d6\u05d4 \u05d1\u05d3\u05d5\u05d2\u05de\u05ea \u05e7\u05d5\u05d3 \u05e9\u05dc \u05d8\u05d9\u05e1\u05d5\u05ea \u05d1\u05d6\u05de\u05df \u05d0\u05de\u05ea.\"\n\n\u05d4\u05e9\u05db\u05d1\u05d4 \u05d1\u05d5\u05e0\u05d4 \u05e1\u05e4\u05e8\u05d9\u05d9\u05ea \u05e0\u05ea\u05d9\u05d1\u05d9\u05dd \u05d4\u05d9\u05e1\u05d8\u05d5\u05e8\u05d9\u05ea \u05d1\u05d0\u05de\u05e6\u05e2\u05d5\u05ea DBSCAN \u05d5\u05e0\u05d5\u05ea\u05e0\u05ea \u05e6\u05d9\u05d5\u05df \u05d7\u05e8\u05d9\u05d2\u05d4 \u05dc\u05de\u05e1\u05dc\u05d5\u05dc \u05d1\u05d6\u05de\u05df \u05d0\u05de\u05ea.",
+                        "operational_significance": "\u05de\u05d0\u05e4\u05e9\u05e8 \u05dc\u05e0\u05d5 \u05dc\u05dc\u05de\u05d5\u05d3 \"\u05d6\u05e8\u05d9\u05de\u05d5\u05ea\" \u05d8\u05d9\u05e1\u05d4 \u05de-3 \u05d7\u05d5\u05d3\u05e9\u05d9 \u05d3\u05d0\u05d8\u05d4 \u05d5\u05dc\u05d6\u05d4\u05d5\u05ea \u05d8\u05d9\u05e1\u05d5\u05ea \u05e9\u05de\u05ea\u05e8\u05d7\u05e7\u05d5\u05ea \u05de\u05e9\u05de\u05e2\u05d5\u05ea\u05d9\u05ea \u05de\u05de\u05e1\u05dc\u05d5\u05dc \u05e0\u05d5\u05e8\u05de\u05dc\u05d9 \u05dc\u05e4\u05e0\u05d9 \u05e9\u05de\u05d5\u05e4\u05d9\u05e2\u05d9\u05dd \u05e1\u05d9\u05de\u05e0\u05d9 \u05d7\u05d9\u05e8\u05d5\u05dd \u05d0\u05d7\u05e8\u05d9\u05dd."
+                    },
+                    {
+                        "id": 12,
+                        "name": "\u05e0\u05d7\u05d9\u05ea\u05d4 \u05dc\u05d0 \u05de\u05ea\u05d5\u05db\u05e0\u05e0\u05ea \u05d1\u05d9\u05e9\u05e8\u05d0\u05dc",
+                        "details": {},
+                        "matched": false,
+                        "summary": "Missing planned destination",
+                        "category": "security_alert",
+                        "severity": 5,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05e9\u05e0\u05d7\u05ea \u05d1\u05e9\u05d3\u05d4 \u05ea\u05e2\u05d5\u05e4\u05d4 \u05d1\u05d9\u05e9\u05e8\u05d0\u05dc, \u05d0\u05da \u05d9\u05e2\u05d3 \u05d4\u05d8\u05d9\u05e1\u05d4 \u05d4\u05de\u05e7\u05d5\u05e8\u05d9 \u05e9\u05dc\u05d5 (\u05dc\u05e4\u05d9 \u05ea\u05d5\u05db\u05e0\u05d9\u05ea \u05d4\u05d8\u05d9\u05e1\u05d4) \u05d4\u05d9\u05d4 \u05e9\u05d5\u05e0\u05d4.",
+                        "operational_significance": "\u05d7\u05e9\u05d3 \u05dc\u05d7\u05d8\u05d9\u05e4\u05d4/\u05d4\u05e1\u05d8\u05d4 \u05de\u05db\u05d5\u05d5\u05e0\u05ea: \u05db\u05dc\u05d9 \u05d8\u05d9\u05e1 \u05e9\u05e0\u05d5\u05d7\u05ea \u05d1\u05d9\u05e9\u05e8\u05d0\u05dc \u05dc\u05dc\u05d0 \u05d0\u05d9\u05e9\u05d5\u05e8 \u05de\u05d5\u05e7\u05d3\u05dd \u05d0\u05d5 \u05d1\u05e0\u05d9\u05d2\u05d5\u05d3 \u05dc\u05d9\u05e2\u05d3\u05d5 \u05d4\u05de\u05e7\u05d5\u05e8\u05d9."
+                    }
+                ],
+                "total_rules": 12,
+                "matched_rules": [
+                    {
+                        "id": 3,
+                        "name": "\u05d1\u05d9\u05e6\u05d5\u05e2 \u05e4\u05e0\u05d9\u05d9\u05d4 180\u00b0 \u05d0\u05d5 360\u00b0",
+                        "details": {
+                            "events": []
+                        },
+                        "matched": true,
+                        "summary": "Abrupt heading change or holding pattern observed",
+                        "category": "heading_manoeuvre",
+                        "severity": 4,
+                        "definition": "\u05de\u05d8\u05d5\u05e1 \u05d4\u05de\u05d1\u05e6\u05e2 \u05e1\u05d1\u05d1 \u05e9\u05dc\u05dd \u05d0\u05d5 \u05d7\u05e6\u05d9 \u05e1\u05d1\u05d1 \u05d7\u05d6\u05e7 \u05d1\u05de\u05e7\u05d5\u05dd \u05d1\u05de\u05e8\u05d7\u05d1 \u05d0\u05d5\u05d5\u05d9\u05e8\u05d9 \u05e4\u05ea\u05d5\u05d7, \u05e9\u05dc\u05d0 \u05d1\u05d0\u05d6\u05d5\u05e8 \u05d4\u05de\u05ea\u05e0\u05d4 \u05de\u05d5\u05d2\u05d3\u05e8.",
+                        "operational_significance": "\u05d4\u05e4\u05e8\u05ea \u05e0\u05d5\u05d4\u05dc \u05d7\u05de\u05d5\u05e8\u05d4/\u05d7\u05e9\u05d3 \u05dc\u05e8\u05d9\u05d2\u05d5\u05dc: \u05de\u05e2\u05d9\u05d3 \u05e2\u05dc \u05db\u05e9\u05dc \u05d1\u05e0\u05d9\u05d5\u05d5\u05d8, \u05d0\u05d5 \u05e0\u05d9\u05e1\u05d9\u05d5\u05df \u05de\u05db\u05d5\u05d5\u05df \u05dc\u05d4\u05d9\u05db\u05e0\u05e1/\u05dc\u05e6\u05d0\u05ea \u05de\u05d0\u05d6\u05d5\u05e8 \u05d0\u05e1\u05d5\u05e8."
+                    }
+                ]
+            },
+            "status": "ANOMALY",
+            "triggers": [
+                "\u05d1\u05d9\u05e6\u05d5\u05e2 \u05e4\u05e0\u05d9\u05d9\u05d4 180\u00b0 \u05d0\u05d5 360\u00b0"
+            ]
+        },
+        "layer_6_hybrid": {
+            "score": 0.003215906908735633,
+            "severity": 0.2681355570612243,
+            "threshold": 0.011993586169555774,
+            "is_anomaly": false,
+            "anomaly_points": []
+        },
+        "layer_2_xgboost": {
+            "score": 0.875,
+            "status": "ANOMALY",
+            "threshold": 0.5,
+            "is_anomaly": true,
+            "anomaly_points": []
+        },
+        "layer_4_deep_cnn": {
+            "score": 0.08711658418178558,
+            "status": "NORMAL",
+            "severity": 0.6730252501542935,
+            "threshold": 0.12944029092788686,
+            "cluster_id": 3,
+            "is_anomaly": false,
+            "anomaly_points": []
+        },
+        "layer_3_deep_dense": {
+            "score": 0.11835729330778122,
+            "status": "NORMAL",
+            "severity": 0.4457043278871023,
+            "threshold": 0.2655511420965186,
+            "cluster_id": 3,
+            "is_anomaly": false,
+            "anomaly_points": []
+        },
+        "layer_5_transformer": {
+            "score": 0.00043744363938458264,
+            "status": "NORMAL",
+            "severity": 0.059246064992812625,
+            "threshold": 0.007383505376055788,
+            "cluster_id": 3,
+            "is_anomaly": false,
+            "anomaly_points": []
+        }
+    },
+    "flight_time": 1762379150,
+    "custom_prompt": "tell me in high summarized level in 3-5 words the reason for what happened here"
+}
