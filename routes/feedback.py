@@ -477,6 +477,51 @@ def get_feedback_track(flight_id: str):
     raise HTTPException(status_code=404, detail=f"No track data for {flight_id}")
 
 
+@router.get("/api/feedback/track/live/{flight_id}")
+def get_live_track(flight_id: str):
+    """
+    Return track points from live schema in PostgreSQL.
+    This is used for real-time monitoring data.
+    
+    Args:
+        flight_id: Flight ID to fetch
+    
+    Returns:
+        Dict with flight_id and points list
+    """
+    try:
+        from service.pg_provider import get_flight_track
+        
+        # Fetch track from live schema
+        points = get_flight_track(flight_id, schema='live')
+        
+        if not points:
+            raise HTTPException(status_code=404, detail=f"No track data found in live schema for {flight_id}")
+        
+        # Add heading alias for compatibility (frontend expects 'heading')
+        for point in points:
+            if 'track' in point and 'heading' not in point:
+                point['heading'] = point['track']
+        
+        logger.info(f"[LIVE TRACK] Returning {len(points)} points for {flight_id} from PostgreSQL live schema")
+        
+        return {
+            "flight_id": flight_id,
+            "points": points,
+            "source": "postgresql.live",
+            "total_points": len(points),
+        }
+    
+    except HTTPException:
+        raise
+    except ImportError as ie:
+        logger.error(f"PostgreSQL provider not available: {ie}")
+        raise HTTPException(status_code=500, detail="PostgreSQL provider not available")
+    except Exception as e:
+        logger.error(f"Failed to fetch live track: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/feedback/reanalyze/{flight_id}")
 def reanalyze_feedback_flight(
     flight_id: str,
@@ -1041,6 +1086,7 @@ def get_replay_other_flight(flight_id: str):
     Search order:
     1. feedback schema (tagged flights)
     2. research schema (research data)
+    3. live schema (live monitoring data)
     
     Also fetches flight metadata from flight_metadata table.
     """
@@ -1096,6 +1142,29 @@ def get_replay_other_flight(flight_id: str):
                         callsign = metadata['callsign']
             except Exception as e:
                 logger.warning(f"Error fetching from research schema: {e}")
+        
+        # 3. Fallback to live schema if still not found
+        if not points:
+            try:
+                points = get_flight_track(flight_id, schema='live')
+                if points:
+                    source_schema = "live"
+                    logger.debug(f"Found track in live schema for {flight_id}")
+                    
+                    # Get metadata from live schema
+                    metadata = get_flight_metadata(flight_id, schema='live')
+                    
+                    # Add heading alias for compatibility
+                    for point in points:
+                        if 'track' in point:
+                            point['heading'] = point['track']
+                    
+                    # Get callsign from points or metadata
+                    callsign = next((p.get('callsign') for p in points if p.get('callsign')), None)
+                    if not callsign and metadata and metadata.get('callsign'):
+                        callsign = metadata['callsign']
+            except Exception as e:
+                logger.warning(f"Error fetching from live schema: {e}")
         
         if not points:
             raise HTTPException(status_code=404, detail=f"Track not found for {flight_id}")

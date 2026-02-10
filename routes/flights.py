@@ -583,96 +583,97 @@ def analyze_flight_from_db_endpoint(flight_id: str):
 @router.get("/api/live/anomalies")
 def get_live_anomalies(start_ts: int, end_ts: int):
     """
-    Fetch anomalies from the live research database (live_research.db) within a time range.
+    Fetch anomalies from PostgreSQL live schema within a time range.
     This is populated by realtime/monitor.py.
     """
-    # Use DB_LIVE_RESEARCH_PATH (realtime/live_research.db) where monitor.py saves data
-    logger.info(f"[LIVE_ANOMALIES] Using DB: {DB_LIVE_RESEARCH_PATH}")
-    if not DB_LIVE_RESEARCH_PATH or not DB_LIVE_RESEARCH_PATH.exists():
-        logger.warning(f"Live research DB not found at {DB_LIVE_RESEARCH_PATH}")
-        return []
-
     try:
+        from service.pg_provider import get_connection
         from core.airport_lookup import enrich_origin_destination
+        import psycopg2.extras
         
-        conn = sqlite3.connect(str(DB_LIVE_RESEARCH_PATH))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        logger.info(f"[LIVE_ANOMALIES] Fetching from PostgreSQL live schema for range {start_ts} to {end_ts}")
+        
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                # Join with flight_metadata to get is_military, category, aircraft_type
+                query = """
+                    SELECT ar.flight_id, ar.timestamp, ar.is_anomaly, ar.severity_cnn, ar.severity_dense, ar.full_report,
+                           ar.callsign, ar.airline, ar.origin_airport, ar.destination_airport,
+                           ar.matched_rule_names, ar.matched_rule_ids, ar.matched_rule_categories,
+                           fm.is_military, fm.category, fm.aircraft_type, fm.aircraft_registration
+                    FROM live.anomaly_reports ar
+                    LEFT JOIN live.flight_metadata fm ON ar.flight_id = fm.flight_id
+                    WHERE ar.timestamp BETWEEN %s AND %s AND ar.is_anomaly = true
+                    ORDER BY ar.timestamp DESC
+                """
 
-        # Join with flight_metadata to get is_military, category, aircraft_type
-        query = """
-            SELECT ar.flight_id, ar.timestamp, ar.is_anomaly, ar.severity_cnn, ar.severity_dense, ar.full_report,
-                   ar.callsign, ar.airline, ar.origin_airport, ar.destination_airport,
-                   ar.matched_rule_names, ar.matched_rule_ids,
-                   fm.is_military, fm.category, fm.aircraft_type, fm.aircraft_registration
-            FROM anomaly_reports ar
-            LEFT JOIN flight_metadata fm ON ar.flight_id = fm.flight_id
-            WHERE ar.timestamp BETWEEN ? AND ? AND ar.is_anomaly = 1
-            ORDER BY ar.timestamp DESC
-        """
+                cursor.execute(query, (start_ts, end_ts))
+                rows = cursor.fetchall()
+                
+                logger.info(f"[LIVE_ANOMALIES] Found {len(rows)} anomalies in PostgreSQL live schema")
 
-        cursor.execute(query, (start_ts, end_ts))
-        rows = cursor.fetchall()
-        conn.close()
+                results = []
+                for row in rows:
+                    # Parse full report if it's a string
+                    report = row["full_report"]
+                    if isinstance(report, str):
+                        try:
+                            report = json.loads(report)
+                        except:
+                            pass
 
-        results = []
-        for row in rows:
-            # Parse full report if it's a string
-            report = row["full_report"]
-            if isinstance(report, str):
-                try:
-                    report = json.loads(report)
-                except:
-                    pass
+                    # Get callsign from row directly
+                    callsign = row["callsign"]
+                    
+                    # Fallback: Try to get callsign from the report summary
+                    if not callsign and isinstance(report, dict):
+                        callsign = report.get("summary", {}).get("callsign")
 
-            # Get callsign from row directly (new schema)
-            callsign = row["callsign"]
-            
-            # Fallback: Try to get callsign from the report summary
-            if not callsign and isinstance(report, dict):
-                callsign = report.get("summary", {}).get("callsign")
+                    # Inject is_military and category into full_report.summary if not present
+                    is_military = bool(row["is_military"]) if row["is_military"] is not None else False
+                    category = row["category"]
+                    aircraft_type = row["aircraft_type"]
+                    
+                    if isinstance(report, dict):
+                        if "summary" not in report:
+                            report["summary"] = {}
+                        if report["summary"].get("is_military") is None:
+                            report["summary"]["is_military"] = is_military
+                        if report["summary"].get("category") is None and category:
+                            report["summary"]["category"] = category
+                        if report["summary"].get("aircraft_type") is None and aircraft_type:
+                            report["summary"]["aircraft_type"] = aircraft_type
 
-            # Inject is_military and category into full_report.summary if not present
-            is_military = bool(row["is_military"]) if row["is_military"] is not None else False
-            category = row["category"]
-            aircraft_type = row["aircraft_type"]
-            
-            if isinstance(report, dict):
-                if "summary" not in report:
-                    report["summary"] = {}
-                if report["summary"].get("is_military") is None:
-                    report["summary"]["is_military"] = is_military
-                if report["summary"].get("category") is None and category:
-                    report["summary"]["category"] = category
-                if report["summary"].get("aircraft_type") is None and aircraft_type:
-                    report["summary"]["aircraft_type"] = aircraft_type
+                    # Enrich airport data with place information
+                    places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
 
-            # Enrich airport data with place information
-            places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
+                    results.append({
+                        "flight_id": row["flight_id"],
+                        "timestamp": row["timestamp"],
+                        "is_anomaly": bool(row["is_anomaly"]),
+                        "severity_cnn": row["severity_cnn"] or 0,
+                        "severity_dense": row["severity_dense"] or 0,
+                        "full_report": report,
+                        "callsign": callsign,
+                        "airline": row["airline"],
+                        "origin_airport": row["origin_airport"],
+                        "destination_airport": row["destination_airport"],
+                        "origin_place": places["origin_place"],
+                        "destination_place": places["destination_place"],
+                        "matched_rule_names": row["matched_rule_names"],
+                        "matched_rule_ids": row["matched_rule_ids"],
+                        "is_military": is_military,
+                        "category": category,
+                        "aircraft_type": aircraft_type,
+                    })
 
-            results.append({
-                "flight_id": row["flight_id"],
-                "timestamp": row["timestamp"],
-                "is_anomaly": bool(row["is_anomaly"]),
-                "severity_cnn": row["severity_cnn"] or 0,
-                "severity_dense": row["severity_dense"] or 0,
-                "full_report": report,
-                "callsign": callsign,
-                "airline": row["airline"],
-                "origin_airport": row["origin_airport"],
-                "destination_airport": row["destination_airport"],
-                "origin_place": places["origin_place"],
-                "destination_place": places["destination_place"],
-                "matched_rule_names": row["matched_rule_names"],
-                "matched_rule_ids": row["matched_rule_ids"],
-                "is_military": is_military,
-                "category": category,
-                "aircraft_type": aircraft_type,
-            })
-
-        return results
+                return results
+                
+    except ImportError as ie:
+        logger.error(f"PostgreSQL provider not available: {ie}")
+        raise HTTPException(status_code=500, detail="PostgreSQL provider not available")
     except Exception as e:
-        logger.error(f"Failed to fetch live anomalies: {e}")
+        logger.error(f"Failed to fetch live anomalies from PostgreSQL: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -767,60 +768,63 @@ def get_all_live_flights():
 @router.get("/api/live/anomalies/since")
 def get_live_anomalies_since(ts: int):
     """
-    Get anomalies detected since a specific timestamp.
+    Get anomalies detected since a specific timestamp from PostgreSQL live schema.
     Used by frontend to detect new anomalies for alert sounds.
     """
-    if not DB_LIVE_RESEARCH_PATH or not DB_LIVE_RESEARCH_PATH.exists():
-        return {"anomalies": [], "count": 0}
-
     try:
+        from service.pg_provider import get_connection
         from core.airport_lookup import enrich_origin_destination
+        import psycopg2.extras
         
-        conn = sqlite3.connect(str(DB_LIVE_RESEARCH_PATH))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT 
-                ar.flight_id, ar.timestamp, ar.is_anomaly, ar.severity_cnn, ar.severity_dense,
-                ar.callsign, ar.airline, ar.origin_airport, ar.destination_airport,
-                ar.matched_rule_names, ar.matched_rule_ids
-            FROM anomaly_reports ar
-            WHERE ar.timestamp > ? AND ar.is_anomaly = 1
-            ORDER BY ar.timestamp DESC
-        """, (ts,))
+        logger.info(f"[LIVE_ANOMALIES_SINCE] Fetching from PostgreSQL live schema since {ts}")
         
-        rows = cursor.fetchall()
-        conn.close()
-        
-        anomalies = []
-        for row in rows:
-            # Enrich airport data with place information
-            places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
-            
-            anomalies.append({
-                "flight_id": row["flight_id"],
-                "timestamp": row["timestamp"],
-                "is_anomaly": bool(row["is_anomaly"]),
-                "severity_cnn": row["severity_cnn"] or 0,
-                "severity_dense": row["severity_dense"] or 0,
-                "callsign": row["callsign"],
-                "airline": row["airline"],
-                "origin_airport": row["origin_airport"],
-                "destination_airport": row["destination_airport"],
-                "origin_place": places["origin_place"],
-                "destination_place": places["destination_place"],
-                "matched_rule_names": row["matched_rule_names"],
-                "matched_rule_ids": row["matched_rule_ids"],
-            })
-        
-        return {
-            "anomalies": anomalies,
-            "count": len(anomalies),
-        }
-        
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        ar.flight_id, ar.timestamp, ar.is_anomaly, ar.severity_cnn, ar.severity_dense,
+                        ar.callsign, ar.airline, ar.origin_airport, ar.destination_airport,
+                        ar.matched_rule_names, ar.matched_rule_ids
+                    FROM live.anomaly_reports ar
+                    WHERE ar.timestamp > %s AND ar.is_anomaly = true
+                    ORDER BY ar.timestamp DESC
+                """, (ts,))
+                
+                rows = cursor.fetchall()
+                
+                logger.info(f"[LIVE_ANOMALIES_SINCE] Found {len(rows)} new anomalies in PostgreSQL live schema")
+                
+                anomalies = []
+                for row in rows:
+                    # Enrich airport data with place information
+                    places = enrich_origin_destination(row["origin_airport"], row["destination_airport"])
+                    
+                    anomalies.append({
+                        "flight_id": row["flight_id"],
+                        "timestamp": row["timestamp"],
+                        "is_anomaly": bool(row["is_anomaly"]),
+                        "severity_cnn": row["severity_cnn"] or 0,
+                        "severity_dense": row["severity_dense"] or 0,
+                        "callsign": row["callsign"],
+                        "airline": row["airline"],
+                        "origin_airport": row["origin_airport"],
+                        "destination_airport": row["destination_airport"],
+                        "origin_place": places["origin_place"],
+                        "destination_place": places["destination_place"],
+                        "matched_rule_names": row["matched_rule_names"],
+                        "matched_rule_ids": row["matched_rule_ids"],
+                    })
+                
+                return {
+                    "anomalies": anomalies,
+                    "count": len(anomalies),
+                }
+                
+    except ImportError as ie:
+        logger.error(f"PostgreSQL provider not available: {ie}")
+        return {"anomalies": [], "count": 0, "error": "PostgreSQL provider not available"}
     except Exception as e:
-        logger.error(f"Failed to fetch live anomalies since {ts}: {e}")
+        logger.error(f"Failed to fetch live anomalies since {ts} from PostgreSQL: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

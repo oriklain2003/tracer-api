@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
@@ -668,6 +669,262 @@ def ai_classify_anomaly_endpoint(request: ClassifyAnomalyRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/api/ai/classify_built_prompt")
+def ai_classify_anomaly_endpoint_built_prompt(request: ClassifyAnomalyRequest):
+    """
+    Classify an anomaly flight and choose the most appropriate anomaly reason from predefined rules.
+    Uses Google Gemini with structured output to ensure consistent classification.
+    """
+    try:
+        logger.info(f"AI Classify request for flight {request.flight_id}")
+
+        # Extract callsign from flight data
+        callsign = None
+        if request.flight_data:
+            for p in request.flight_data:
+                if p.get("callsign"):
+                    callsign = p["callsign"]
+                    break
+
+        flight_time = request.flight_time
+        if not flight_time and request.flight_data:
+            flight_time = request.flight_data[0].get('timestamp')
+
+        # Load flight metadata from database instead of fetching
+        try:
+            from service.pg_provider import get_flight_metadata
+            flight_details = get_flight_metadata(request.flight_id, schema='research')
+            if not flight_details:
+                # Fallback to basic info if not in DB
+                flight_details = {
+                    "flight_id": request.flight_id,
+                    "callsign": callsign
+                }
+            else:
+                # Ensure callsign is set
+                if not flight_details.get('callsign') and callsign:
+                    flight_details['callsign'] = callsign
+        except Exception as e:
+            logger.warning(f"Could not load metadata from DB: {e}, using basic info")
+            flight_details = {
+                "flight_id": request.flight_id,
+                "callsign": callsign
+            }
+
+        # Build context
+        context_parts = []
+        flight_summary_text = _format_flight_summary_for_llm(flight_details, request.flight_data)
+        context_parts.append(flight_summary_text)
+
+        # Add time window
+        if request.flight_data and len(request.flight_data) >= 2:
+            ts0 = request.flight_data[0].get("timestamp")
+            ts1 = request.flight_data[-1].get("timestamp")
+            if ts0 and ts1:
+                try:
+                    iso0 = datetime.fromtimestamp(int(ts0), tz=timezone.utc).isoformat()
+                    iso1 = datetime.fromtimestamp(int(ts1), tz=timezone.utc).isoformat()
+                    context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0} ({iso0})\nEnd: {ts1} ({iso1})")
+                except Exception:
+                    context_parts.append(f"\n=== TIME RANGE ===\nStart: {ts0}\nEnd: {ts1}")
+
+        # Generate map image
+        map_image_base64 = None
+        image_bytes = None
+        mime_type = "image/png"
+        
+        if request.flight_data and len(request.flight_data) >= 2:
+            map_image_base64 = _generate_flight_map_image(request.flight_data)
+            if map_image_base64:
+                try:
+                    image_bytes = base64.b64decode(map_image_base64)
+                    logger.info("Generated and decoded map image for classification")
+                except Exception as e:
+                    logger.error(f"Failed to decode generated map: {e}")
+
+
+        if request.anomaly_report:
+            context_parts.append("\n=== ANOMALY ANALYSIS ===")
+            report = request.anomaly_report
+
+            summary = report.get('summary', {})
+            if summary:
+                context_parts.append(f"Is Anomaly: {summary.get('is_anomaly', 'Unknown')}")
+                context_parts.append(f"Confidence Score: {summary.get('confidence_score', 'N/A')}%")
+                triggers = summary.get('triggers', [])
+                triggers = _rewrite_triggers_with_feedback(triggers, request.flight_id)
+                if triggers:
+                    context_parts.append(f"Triggers: {', '.join(triggers)}")
+
+            # Extract matched rules from layer_1_rules (matching data.json structure)
+            layer1 = report.get('layer_1_rules', {})
+            layer1_report = layer1.get('report', {})
+            matched_rules = layer1_report.get('matched_rules', [])
+            
+            # Add matched rules information
+            if matched_rules:
+                context_parts.append("\n=== MATCHED RULES ===")
+                for rule in matched_rules:
+                    rule_name = rule.get('name', f"Rule {rule.get('id')}")
+                    rule_summary = rule.get('summary', '')
+                    if rule_summary:
+                        context_parts.append(f"  - {rule_name}: {rule_summary}")
+                    else:
+                        context_parts.append(f"  - {rule_name}")
+            
+            # Check for proximity events in matched rules
+            proximity_events = []
+            for rule in matched_rules:
+                # Check if this is a proximity rule (id 4 or name contains proximity/התקרבות)
+                is_proximity_rule = rule.get('id') == 4 or 'proximity' in str(rule.get('name', '')).lower() or 'התקרבות' in str(rule.get('name', ''))
+                if is_proximity_rule:
+                    events = rule.get('details', {}).get('events', [])
+                    if events:
+                        for event in events:
+                            if isinstance(event, dict):
+                                proximity_events.append(event)
+            
+            # Add prominent proximity alert section if there are proximity events
+            if proximity_events:
+                context_parts.append("\n=== ⚠️ PROXIMITY ALERT - THIS FLIGHT HAS PROXIMITY EVENTS ===")
+                
+                # Generate summary statistics
+                total_events = len(proximity_events)
+                other_aircraft = set()
+                distances = []
+                alt_diffs = []
+                
+                for event in proximity_events:
+                    callsign = event.get('other_callsign') or event.get('other_flight') or 'Unknown'
+                    if callsign != 'Unknown':
+                        other_aircraft.add(callsign)
+                    if event.get('distance_nm') is not None:
+                        try:
+                            distances.append(float(event['distance_nm']))
+                        except (ValueError, TypeError):
+                            pass
+                    if event.get('altitude_diff_ft') is not None:
+                        try:
+                            alt_diffs.append(float(event['altitude_diff_ft']))
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Summary section
+                context_parts.append("\nSUMMARY:")
+                context_parts.append(f"  Total proximity events: {total_events}")
+                context_parts.append(f"  Other aircraft involved: {', '.join(other_aircraft) if other_aircraft else 'Unknown'}")
+                if distances:
+                    context_parts.append(f"  Distance range: {min(distances):.1f} - {max(distances):.1f} NM (min: {min(distances):.1f} NM)")
+                if alt_diffs:
+                    context_parts.append(f"  Altitude diff range: {min(alt_diffs):.0f} - {max(alt_diffs):.0f} ft")
+                
+                # Sample up to 5 events (evenly distributed if more than 5)
+                if total_events <= 5:
+                    sampled_events = proximity_events
+                else:
+                    # Sample evenly: first, last, and 3 from middle
+                    indices = [0]
+                    step = (total_events - 1) / 4
+                    for i in range(1, 4):
+                        indices.append(int(i * step))
+                    indices.append(total_events - 1)
+                    sampled_events = [proximity_events[i] for i in indices]
+                
+                context_parts.append(f"\nSAMPLED EVENTS ({len(sampled_events)} of {total_events}):")
+                for i, event in enumerate(sampled_events, 1):
+                    other_callsign = event.get('other_callsign') or event.get('other_flight') or 'Unknown'
+                    other_flight_id = event.get('other_flight') or event.get('other_flight_id') or 'Unknown'
+                    distance_nm = event.get('distance_nm', 'Unknown')
+                    altitude_diff = event.get('altitude_diff_ft', 'Unknown')
+                    timestamp = event.get('timestamp', 'Unknown')
+                    
+                    context_parts.append(f"  #{i}: {other_callsign} | Dist: {distance_nm} NM | Alt Diff: {altitude_diff} ft | TS: {timestamp}")
+                
+                context_parts.append("\nWhen answering questions, consider these proximity events and the other aircraft involved.")
+
+        context_parts.append("\n=== TASK ===")
+        if image_bytes:
+            context_parts.append("A map visualization of the flight path is attached. Use it to analyze the flight pattern visually.")
+        
+        # Check if custom prompt is provided
+        if request.custom_prompt:
+            # Use custom prompt provided by user - free-form analysis
+            context_parts.append("\n=== USER CLASSIFICATION INSTRUCTIONS ===")
+            context_parts.append(request.custom_prompt)
+            context_parts.append("\nBased on the flight data, map, and analysis above, provide your classification according to these instructions.")
+            context_parts.append("Analyze what you observe and describe what happened without being constrained to predefined categories.")
+            use_structured_output = False
+        else:
+            # Use predefined rules (backward compatibility)
+            context_parts.append("Based on the flight data and map above, classify this anomaly by selecting the MOST PROBLEMATIC rule the flight violated from the list.")
+            context_parts.append("Consider the flight pattern, triggers, matched rules, and any unusual behavior visible in the map.")
+            context_parts.append("Provide your confidence level (High, Medium, or Low) and a brief reasoning for your choice.")
+            use_structured_output = True
+
+        full_prompt_text = "\n".join(context_parts)
+
+        # Build Gemini request
+        parts = [_types.Part(text=full_prompt_text)]
+        
+        # Add map image if available
+        if image_bytes:
+            parts.append(
+                _types.Part(
+                    inline_data=_types.Blob(
+                        mime_type=mime_type,
+                        data=image_bytes
+                    )
+                )
+            )
+            logger.info("Added map image to Gemini classification request")
+
+        # Configure based on whether using structured output or custom prompt
+
+        config = _types.GenerateContentConfig(
+            system_instruction="""As an expert aviation data analyst, your core mission is to perform a surgical inference of the root cause by correlating the detected flight anomaly with the provided environmental context. You must move beyond simple observation to determine exactly why the anomaly was a logical necessity or a specific response to the surrounding conditions, ensuring that the environmental data justifies the flight behavior. It is critical that your final output is restricted to a professional summary of exactly three to six words, providing only the ultimate root cause without any introductory phrases, filler text, or repetition of the input """,
+                        tools=[_types.Tool(google_search=_types.GoogleSearch()), {'code_execution': {}}]
+
+        )
+
+        content = _types.Content(parts=parts)
+        logger.info("Calling Gemini API for anomaly classification...")
+        start_time = time.time()
+        response = _gemini_client.models.generate_content(
+            model="gemini-3-flash-preview",
+            config=config,
+            contents=[content]
+        )
+        logger.info(f"Gemini response time: {time.time() - start_time} seconds")
+        
+        # Extract response
+        response_text = extract_gemini_text(response)
+        
+        # Return based on output type
+        if use_structured_output:
+            # Validate the response using Pydantic
+            classification = AnomalyClassification.model_validate_json(response_text)
+            
+            # Find the full rule details
+            matched_rule = next((r for r in RULES_METADATA if r['id'] == classification.rule_id), None)
+            
+            return {
+                "classification": classification.model_dump(),
+                "rule_details": matched_rule
+            }
+        else:
+            # Return free-form classification based on custom prompt
+            return {
+                "classification": response_text,
+                "custom_prompt": request.custom_prompt
+            }
+
+    except Exception as e:
+        logger.error(f"AI Classify endpoint error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/api/ai/analyze")
@@ -1359,4 +1616,64 @@ def reasoning_endpoint(request: ReasoningRequest):
 
     except Exception as e:
         logger.error(f"[REASONING API] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/flights/{flight_id}/ai-classification")
+def get_flight_ai_classification(
+    flight_id: str,
+    schema: str = Query(default="live", description="Database schema to query")
+):
+    """
+    Get AI classification for a specific flight.
+    
+    Args:
+        flight_id: The flight identifier
+        schema: Database schema (default: live)
+    
+    Returns:
+        AI classification data including classification text, confidence, processing time, etc.
+    """
+    try:
+        from service.pg_provider import get_connection
+        
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(f"""
+                    SELECT 
+                        flight_id,
+                        classification_text,
+                        confidence_score,
+                        processing_time_sec,
+                        created_at,
+                        error_message,
+                        gemini_model
+                    FROM {schema}.ai_classifications
+                    WHERE flight_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (flight_id,))
+                
+                result = cursor.fetchone()
+                
+                if not result:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"AI classification not found for flight {flight_id}"
+                    )
+                
+                return {
+                    "flight_id": result["flight_id"],
+                    "classification": result["classification_text"],
+                    "confidence_score": result["confidence_score"],
+                    "processing_time_sec": result["processing_time_sec"],
+                    "created_at": result["created_at"].isoformat() if result["created_at"] else None,
+                    "error": result["error_message"],
+                    "model": result["gemini_model"]
+                }
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching AI classification for {flight_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
