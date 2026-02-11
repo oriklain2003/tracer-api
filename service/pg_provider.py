@@ -103,48 +103,83 @@ class PostgreSQLConnectionPool:
         Context manager to get a connection from the pool.
         
         Ensures connections are always returned to the pool, even on exceptions.
-        Optionally validates connection health (disabled by default to avoid extra
-        getconn() under load and double-putconn bugs when pool is exhausted).
+        Dead connections are properly closed and not returned to the pool.
         """
         if not self.__class__._initialized:
             raise RuntimeError("Connection pool not initialized")
         
         conn = None
+        connection_returned = False
+        
         try:
             conn = self._pool.getconn()
-            # Only check if connection is obviously dead; skip SELECT 1 to avoid
-            # second getconn() under load (which could exhaust pool or double-put)
+            
+            # Validate connection is alive
             if conn.closed:
+                logger.warning("Got closed connection from pool, getting a new one")
                 self._pool.putconn(conn, close=True)
-                conn = None
                 conn = self._pool.getconn()
+            
             yield conn
+                    
         except psycopg2.OperationalError as e:
             logger.error(f"PostgreSQL operational error: {e}")
+            # Connection is likely dead, close it and don't return to pool
             if conn is not None:
                 try:
                     self._pool.putconn(conn, close=True)
-                except Exception:
-                    pass
-                conn = None
+                    connection_returned = True
+                except Exception as ex:
+                    logger.error(f"Error closing dead connection: {ex}")
             raise
+            
         except Exception as e:
             logger.error(f"Error with PostgreSQL connection: {e}")
-            if conn is not None:
-                try:
-                    self._pool.putconn(conn, close=True)
-                except Exception:
-                    pass
-                conn = None
-            raise
-        finally:
-            if conn is not None:
+            # Rollback on error if connection is still alive
+            if conn is not None and not connection_returned:
                 try:
                     if not conn.closed:
                         conn.rollback()
-                    self._pool.putconn(conn)
+                        self._pool.putconn(conn)
+                        connection_returned = True
+                    else:
+                        # Connection died during operation, close it
+                        self._pool.putconn(conn, close=True)
+                        connection_returned = True
+                except Exception as ex:
+                    logger.error(f"Error handling failed connection: {ex}")
+                    try:
+                        if not connection_returned:
+                            self._pool.putconn(conn, close=True)
+                            connection_returned = True
+                    except Exception:
+                        pass
+            raise
+            
+        finally:
+            # Only runs if conn wasn't already returned
+            if conn is not None and not connection_returned:
+                try:
+                    if conn.closed:
+                        # Connection was closed, remove from pool
+                        logger.warning("Connection closed unexpectedly, removing from pool")
+                        self._pool.putconn(conn, close=True)
+                    else:
+                        # Connection still alive, rollback any uncommitted transaction
+                        # (in case user didn't commit) and return to pool
+                        try:
+                            if conn.get_transaction_status() != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+                                conn.rollback()
+                        except Exception as rollback_ex:
+                            logger.error(f"Error during rollback: {rollback_ex}")
+                            # If rollback fails, connection might be dead
+                            self._pool.putconn(conn, close=True)
+                            return
+                        
+                        self._pool.putconn(conn)
                 except Exception as e:
-                    logger.error(f"Error returning connection to pool: {e}")
+                    logger.error(f"Error in finally block returning connection: {e}")
+                    # Last resort: try to close the connection
                     try:
                         self._pool.putconn(conn, close=True)
                     except Exception:
@@ -168,11 +203,23 @@ class PostgreSQLConnectionPool:
         if not self.__class__._initialized or not hasattr(self, '_pool'):
             return {"status": "not_initialized"}
         
-        # Note: ThreadedConnectionPool doesn't expose these directly
-        # This is a basic status check
+        # Test connection health
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    cursor.fetchone()
+            connection_healthy = True
+        except Exception as e:
+            connection_healthy = False
+            logger.error(f"Pool health check failed: {e}")
+        
         return {
-            "status": "active",
+            "status": "active" if connection_healthy else "unhealthy",
             "initialized": self.__class__._initialized,
+            "connection_healthy": connection_healthy,
+            "min_connections": self.MIN_CONNECTIONS,
+            "max_connections": self.MAX_CONNECTIONS,
             "dsn": self.PG_DSN.split('@')[1] if '@' in self.PG_DSN else "hidden"
         }
 

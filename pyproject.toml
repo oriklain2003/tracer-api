@@ -13,6 +13,7 @@ dependencies = [
     "geopy>=2.4.0",
     "google-genai>=0.2.0,<1.0.0",
     "httpx>=0.26.0,<1.0.0",
+    "ipykernel>=7.2.0",
     "numpy>=1.24.0,<2.0.0",
     "openai>=1.10.0,<2.0.0",
     "orjson>=3.9.0,<4.0.0",
