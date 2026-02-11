@@ -2917,3 +2917,54 @@ def search_flights_by_wkt(request: WKTSearchRequest):
         logger.error(f"Error searching flights by WKT: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/api/flight/metadata/{flight_id}")
+def get_flight_metadata_by_id(flight_id: str):
+    """
+    Get flight metadata for ANY flight by ID from research schema.
+    """
+    try:
+        from service.pg_provider import get_flight_metadata
+        
+        metadata = get_flight_metadata(flight_id, schema='research')
+        
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"Flight {flight_id} not found in research schema")
+        
+        return {
+            "flight_id": flight_id,
+            "metadata": metadata
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching flight metadata: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/flight/track/{flight_id}")
+def get_flight_track_by_id(flight_id: str):
+    """
+    Get flight track for ANY flight by ID from research schema.
+    """
+    try:
+        from service.pg_provider import get_flight_track
+        
+        points = get_flight_track(flight_id, schema='research')
+        
+        if not points:
+            raise HTTPException(status_code=404, detail=f"Track for flight {flight_id} not found in research schema")
+        
+        return {
+            "flight_id": flight_id,
+            "points": points,
+            "count": len(points)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching flight track: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
