@@ -354,7 +354,7 @@ pg_pool = get_pool()
 # ============================================================================
 
 from routes.flights import router as flights_router, research_rerun_router, configure as configure_flights, get_unified_track
-from routes.feedback import router as feedback_router, configure as configure_feedback
+from routes.feedback import router as feedback_router, public_router as feedback_public_router, configure as configure_feedback
 from routes.analytics import router as analytics_router, configure as configure_analytics
 from routes.ai_routes import router as ai_router, configure as configure_ai
 from routes.route_planning import router as route_planning_router, configure as configure_route_planning
@@ -451,6 +451,7 @@ app.include_router(
     flights_router)  # /api/live/*, /api/research/*, /api/track/*, /api/rules/*, /api/learned-layers, /api/union-tubes
 app.include_router(research_rerun_router)  # /api/research_rerun/* (no auth required)
 app.include_router(feedback_router)  # /api/feedback/*, /api/replay/*
+app.include_router(feedback_public_router)  # /api/feedback (POST, no auth required)
 
 
 # Public SPA routes (no auth - users need to load login page)

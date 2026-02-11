@@ -503,6 +503,11 @@ def get_tagged_feedback_history(
                         except Exception as e:
                             logger.error(f"Error parsing full_report: {e}")
                             pass
+                    try:
+                        rule_id = json.loads(row.get('rule_ids'))[0] if row.get('rule_ids') else row["rule_id"]
+                    except Exception as e:
+                        
+                        rule_id = row.get('rule_ids')
                     
                     item = {
                         'flight_id': row['flight_id'],
@@ -512,7 +517,7 @@ def get_tagged_feedback_history(
                         'tagged_at': row['tagged_at'],
                         'is_anomaly': bool(row['user_label']),
                         'user_label': row['user_label'],
-                        'rule_id': json.loads(row.get('rule_ids'))[0] if row.get('rule_ids') else row["rule_id"],
+                        'rule_id':rule_id ,
                         'rule_name': row['rule_name'],
                         'rule_ids': row.get('rule_ids'),
                         'rule_names': row.get('rule_names'),

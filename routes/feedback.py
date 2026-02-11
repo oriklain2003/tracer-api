@@ -18,6 +18,7 @@ from routes.users import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Feedback"], dependencies=[Depends(get_current_user)])
+public_router = APIRouter(tags=["Feedback"])
 
 # These will be set by the main api.py module
 CACHE_DB_PATH: Path = None
@@ -1314,15 +1315,85 @@ def update_feedback(feedback_id: int, update_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/feedback")
+def _ensure_feedback_partitions(cursor, ts: int):
+    """
+    Ensure monthly partitions exist in the feedback schema for the given timestamp.
+    Creates partitions for any partitioned feedback tables if they don't already exist.
+    After creating a partition, copies SERIAL/sequence defaults from the parent table
+    so that auto-increment columns work correctly.
+    """
+    dt = datetime.utcfromtimestamp(ts)
+    year = dt.year
+    month = dt.month
+
+    # Partition boundaries: start of this month -> start of next month (UTC)
+    start_ts = int(datetime(year, month, 1).timestamp())
+    if month == 12:
+        end_ts = int(datetime(year + 1, 1, 1).timestamp())
+    else:
+        end_ts = int(datetime(year, month + 1, 1).timestamp())
+
+    suffix = f"{year}_{month:02d}"
+
+    # All feedback tables that may be range-partitioned
+    partitioned_tables = [
+        "feedback.flight_metadata",
+        "feedback.user_feedback",
+        "feedback.anomaly_reports",
+        "feedback.flight_tracks",
+    ]
+
+    for table in partitioned_tables:
+        partition_name = f"{table}_{suffix}"
+        try:
+            cursor.execute("SAVEPOINT sp_part")
+            cursor.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {partition_name}
+                PARTITION OF {table}
+                FOR VALUES FROM (%s) TO (%s)
+                """,
+                (start_ts, end_ts),
+            )
+            # Copy sequence defaults from parent to the new partition
+            # (partitions don't inherit SERIAL defaults automatically)
+            schema_name = table.split(".")[0]
+            table_name = table.split(".")[1]
+            cursor.execute(
+                """
+                SELECT column_name, column_default
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                  AND column_default IS NOT NULL
+                  AND column_default LIKE 'nextval%%'
+                """,
+                (schema_name, table_name),
+            )
+            for col_name, col_default in cursor.fetchall():
+                part_schema = partition_name.split(".")[0]
+                part_table = partition_name.split(".", 1)[1]
+                try:
+                    cursor.execute(
+                        f"ALTER TABLE {partition_name} ALTER COLUMN {col_name} SET DEFAULT {col_default}"
+                    )
+                except Exception:
+                    pass  # already set
+
+            cursor.execute("RELEASE SAVEPOINT sp_part")
+        except Exception as e:
+            # Partition already exists or table is not partitioned — roll back savepoint only
+            cursor.execute("ROLLBACK TO SAVEPOINT sp_part")
+            logger.debug(f"Partition check {partition_name}: {e}")
+
+
+@public_router.post("/api/feedback")
 def submit_feedback(
     feedback: dict,
-    current_user=Depends(lambda: _get_feedback_permission_dependency() or (lambda: None)())
 ):
     """
     Submit user feedback for a flight.
-    Copies ALL flight data (metadata, tracks, full anomaly report) from research_new.db 
-    to feedback_tagged.db to ensure nothing is lost.
+    Copies ALL flight data (metadata, tracks, full anomaly report) from PostgreSQL
+    research schema to feedback schema to ensure nothing is lost.
     
     Payload: {
         "flight_id": "...",
@@ -1333,51 +1404,21 @@ def submit_feedback(
         "other_details": "..." (optional, used when rule_id is null/Other)
     }
     """
-    return _submit_feedback_impl(
-        feedback, 
-        DB_RESEARCH_PATH, 
-        DB_ANOMALIES_PATH, 
-        FEEDBACK_TAGGED_DB_PATH,
-        _fetch_flight_details,
-        _save_feedback,
-        _update_flight_record
-    )
+    import psycopg2
+    import psycopg2.extras
+    from service.pg_provider import get_connection, get_flight_track, get_flight_metadata
 
-
-def _submit_feedback_impl(
-    feedback: dict,
-    db_research_path: Path,
-    db_anomalies_path: Path,
-    feedback_tagged_db_path: Path,
-    fetch_flight_details_func,
-    save_feedback_func,
-    update_flight_record_func,
-):
-    """Implementation of submit_feedback to avoid circular imports."""
-    from pathlib import Path as PathLib
-    import importlib.util
-    
-    # Find the feedback_db module in parent directory
-    feedback_db_path = PathLib(__file__).parent.parent / "feedback_db.py"
-    if feedback_db_path.exists():
-        spec = importlib.util.spec_from_file_location("feedback_db", feedback_db_path)
-        feedback_db = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(feedback_db)
-        save_tagged_flight = feedback_db.save_tagged_flight
-    else:
-        from ..feedback_db import save_tagged_flight
-    
     flight_id = feedback.get("flight_id")
     is_anomaly = feedback.get("is_anomaly")
     comments = feedback.get("comments", "")
     rule_id = feedback.get("rule_id")
     rule_ids = feedback.get("rule_ids")
     other_details = feedback.get("other_details", "")
-    
+
     # Support both old (rule_id) and new (rule_ids) format
     if rule_ids is None and rule_id is not None:
         rule_ids = [rule_id]
-    
+
     # Get the first rule_id for backward compatibility with legacy systems
     if rule_ids and len(rule_ids) > 0:
         rule_id = rule_ids[0]
@@ -1392,68 +1433,67 @@ def _submit_feedback_impl(
 
     logger.info(f"[FEEDBACK] Received feedback for {flight_id}: Anomaly={is_anomaly}, Rules={rule_ids}")
 
-    # Get flight data from research_new.db
-    if not db_research_path.exists():
-        raise HTTPException(status_code=500, detail="Research database not found")
-    
+    # ----------------------------------------------------------------
+    # 1. Read flight data from PostgreSQL research schema
+    # ----------------------------------------------------------------
     points = []
     metadata = None
     full_report = None
-    
+    anomaly_report_row = None
+
     try:
-        conn = sqlite3.connect(str(db_research_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # Get Track Points
-        cursor.execute("SELECT * FROM anomalies_tracks WHERE flight_id = ? ORDER BY timestamp ASC", (flight_id,))
-        rows = cursor.fetchall()
-        tracks_source = "anomalies_tracks"
-        
-        if not rows:
-            cursor.execute("SELECT * FROM normal_tracks WHERE flight_id = ? ORDER BY timestamp ASC", (flight_id,))
-            rows = cursor.fetchall()
-            tracks_source = "normal_tracks"
-        
-        if rows:
-            points = [dict(r) for r in rows]
-            logger.info(f"[FEEDBACK] Found {len(points)} track points from {tracks_source}")
+        # Get track points from research schema (tries anomalies_tracks, then normal_tracks)
+        points = get_flight_track(flight_id, schema='research')
+        if points:
+            logger.info(f"[FEEDBACK] Found {len(points)} track points from research schema")
         else:
-            logger.warning(f"[FEEDBACK] No tracks found for {flight_id} in research_new.db")
-        
-        # Get Flight Metadata
-        cursor.execute("SELECT * FROM flight_metadata WHERE flight_id = ?", (flight_id,))
-        row = cursor.fetchone()
-        if row:
-            metadata = dict(row)
-            logger.info(f"[FEEDBACK] Found metadata with {len(metadata)} fields")
-        
-        # Get Anomaly Report
-        cursor.execute("SELECT * FROM anomaly_reports WHERE flight_id = ? ORDER BY timestamp DESC LIMIT 1", (flight_id,))
-        report_row = cursor.fetchone()
-        if report_row:
-            raw_report = dict(report_row).get("full_report")
-            if raw_report:
-                if isinstance(raw_report, (str, bytes)):
-                    try:
-                        full_report = json.loads(raw_report)
-                    except json.JSONDecodeError:
-                        full_report = None
-                elif isinstance(raw_report, dict):
-                    full_report = raw_report
-        
-        conn.close()
-        
+            logger.warning(f"[FEEDBACK] No tracks found for {flight_id} in research schema")
+
+        # Get flight metadata from research schema
+        metadata = get_flight_metadata(flight_id, schema='research')
+        if metadata:
+            logger.info(f"[FEEDBACK] Found metadata with {len(metadata)} fields from research schema")
+            # Log key fields to debug NULL values
+            logger.debug(f"[FEEDBACK] Metadata keys: {list(metadata.keys())}")
+            logger.debug(f"[FEEDBACK] origin_airport={metadata.get('origin_airport')}, "
+                        f"destination_airport={metadata.get('destination_airport')}, "
+                        f"airline={metadata.get('airline')}, category={metadata.get('category')}")
+
+        # Get anomaly report from research schema
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    """SELECT * FROM research.anomaly_reports
+                       WHERE flight_id = %s
+                       ORDER BY timestamp DESC LIMIT 1""",
+                    (flight_id,)
+                )
+                anomaly_report_row = cursor.fetchone()
+                if anomaly_report_row:
+                    anomaly_report_row = dict(anomaly_report_row)
+                    raw_report = anomaly_report_row.get("full_report")
+                    if raw_report:
+                        if isinstance(raw_report, (str, bytes)):
+                            try:
+                                full_report = json.loads(raw_report)
+                            except json.JSONDecodeError:
+                                full_report = raw_report
+                        elif isinstance(raw_report, dict):
+                            full_report = raw_report
+                    logger.info(f"[FEEDBACK] Found anomaly report from research schema")
+
     except Exception as e:
-        logger.error(f"[FEEDBACK] Error reading from research_new.db: {e}", exc_info=True)
+        logger.error(f"[FEEDBACK] Error reading from research schema: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to read flight data: {str(e)}")
-    
+
     # Validate we have at least tracks
     if not points:
         raise HTTPException(status_code=404,
-                            detail=f"Flight tracks not found for {flight_id} in research_new.db. Cannot save feedback.")
-    
-    # Get Rule Names
+                            detail=f"Flight tracks not found for {flight_id} in research schema. Cannot save feedback.")
+
+    # ----------------------------------------------------------------
+    # 2. Resolve rule names
+    # ----------------------------------------------------------------
     rule_name = None
     rule_names = []
     if rule_ids:
@@ -1470,142 +1510,210 @@ def _submit_feedback_impl(
         except Exception:
             pass
 
-    # Import and call save function
+    # ----------------------------------------------------------------
+    # 3. Copy everything to PostgreSQL feedback schema
+    # ----------------------------------------------------------------
+    now_ts = int(datetime.now().timestamp())
+    first_seen_ts = None
+    last_seen_ts = None
+    callsign = None
+
+    if metadata:
+        first_seen_ts = metadata.get("first_seen_ts")
+        last_seen_ts = metadata.get("last_seen_ts")
+        callsign = metadata.get("callsign")
+
+    if not callsign and points:
+        callsign = next((p.get("callsign") for p in points if p.get("callsign")), None)
+
+    if not first_seen_ts and points:
+        timestamps = [p.get("timestamp", 0) for p in points if p.get("timestamp")]
+        if timestamps:
+            first_seen_ts = min(timestamps)
+            last_seen_ts = max(timestamps)
+
     try:
-        # Import locally to avoid circular imports
-        import importlib.util
-        import sys
-        
-        # Find the feedback_db module
-        feedback_db_path = Path(__file__).parent.parent / "feedback_db.py"
-        if feedback_db_path.exists():
-            spec = importlib.util.spec_from_file_location("feedback_db", feedback_db_path)
-            feedback_db = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(feedback_db)
-            save_tagged_flight = feedback_db.save_tagged_flight
-        else:
-            from ..feedback_db import save_tagged_flight
-    except Exception as e:
-        logger.error(f"[FEEDBACK] Could not import save_tagged_flight: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    
-    logger.info(f"[FEEDBACK] Saving to feedback_tagged.db: tracks={len(points)}, "
-               f"metadata={'YES' if metadata else 'NO'}, report={'YES' if full_report else 'NO'}")
-    
-    success = save_tagged_flight(
-        flight_id=flight_id,
-        rule_id=rule_id,
-        rule_name=rule_name,
-        comments=comments,
-        other_details=other_details,
-        metadata=metadata,
-        tracks=points,
-        report=full_report,
-        is_anomaly=is_anomaly,
-        rule_ids=rule_ids,
-        rule_names=rule_names if rule_names else None
-    )
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save feedback to database")
-    
-    logger.info(f"[FEEDBACK] Successfully saved tagged flight {flight_id} to feedback_tagged.db")
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                # --- Ensure partitions exist for feedback tables ---
+                _ensure_feedback_partitions(cursor, first_seen_ts or now_ts)
 
-    # Legacy database updates (non-critical)
-    try:
-        # Fetch flight details
-        flight_details = None
-        try:
-            callsign_for_lookup = None
-            if points:
-                for p in points:
-                    if p.get("callsign"):
-                        callsign_for_lookup = p["callsign"]
-                        break
-            
-            flight_time = int(datetime.now().timestamp())
-            if points:
-                timestamps = [p.get("timestamp", 0) for p in points if p.get("timestamp")]
-                if timestamps:
-                    flight_time = min(timestamps)
-            
-            flight_details = fetch_flight_details_func(flight_id, flight_time, callsign_for_lookup)
-        except Exception as e:
-            logger.warning(f"Failed to fetch flight details: {e}")
+                # --- Delete any existing data for this flight (safe upsert) ---
+                cursor.execute("DELETE FROM feedback.flight_tracks WHERE flight_id = %s", (flight_id,))
+                cursor.execute("DELETE FROM feedback.anomaly_reports WHERE flight_id = %s", (flight_id,))
+                cursor.execute("DELETE FROM feedback.user_feedback WHERE flight_id = %s", (flight_id,))
+                cursor.execute("DELETE FROM feedback.flight_metadata WHERE flight_id = %s", (flight_id,))
 
-        # Legacy: training_ops/feedback.db
-        try:
-            save_feedback_func(flight_id, is_anomaly, points, comments, rule_id, other_details, full_report, flight_details=flight_details)
-        except Exception as e:
-            logger.warning(f"Failed to save to legacy feedback.db: {e}")
-
-        # Legacy: present_anomalies.db
-        try:
-            update_flight_record_func(
-                flight_id=flight_id,
-                tagged=True,
-                rule_id=rule_id,
-                comments=comments,
-                other_details=other_details,
-                flight_details=flight_details,
-                full_report=full_report,
-                points=points,
-                research_db_path=str(db_research_path) if db_research_path.exists() else None
-            )
-        except Exception as e:
-            logger.warning(f"Failed to update present_anomalies.db: {e}")
-
-        # Update Realtime DB
-        if db_anomalies_path.exists():
-            try:
-                conn = sqlite3.connect(str(db_anomalies_path))
-                cursor = conn.cursor()
-                # Ensure ignored_flights table exists
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS ignored_flights (
-                        flight_id TEXT PRIMARY KEY,
-                        timestamp INTEGER,
-                        reason TEXT
-                    )
-                """)
-                cursor.execute(
-                    "INSERT OR IGNORE INTO ignored_flights (flight_id, timestamp, reason) VALUES (?, ?, ?)",
-                    (flight_id, int(datetime.now().timestamp()), "feedback_given")
-                )
-                if is_anomaly is False:
-                    cursor.execute("UPDATE anomaly_reports SET is_anomaly = 0 WHERE flight_id = ?", (flight_id,))
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                logger.warning(f"Failed to update realtime DB: {e}")
-
-        # Update Research DB
-        if db_research_path.exists():
-            try:
-                conn = sqlite3.connect(str(db_research_path))
-                cursor = conn.cursor()
-                try:
-                    # Ensure ignored_flights table exists
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS ignored_flights (
-                            flight_id TEXT PRIMARY KEY,
-                            timestamp INTEGER,
-                            reason TEXT
-                        )
-                    """)
+                # --- 3a. Copy flight_metadata to feedback.flight_metadata ---
+                if metadata:
                     cursor.execute(
-                        "INSERT OR IGNORE INTO ignored_flights (flight_id, timestamp, reason) VALUES (?, ?, ?)",
-                        (flight_id, int(datetime.now().timestamp()), "feedback_given")
+                        """INSERT INTO feedback.flight_metadata (
+                                flight_id, callsign, flight_number,
+                                origin_airport, destination_airport,
+                                airline, aircraft_type, aircraft_model, aircraft_registration,
+                                category, is_military,
+                                first_seen_ts, last_seen_ts, flight_duration_sec, total_points,
+                                min_altitude_ft, max_altitude_ft, avg_altitude_ft,
+                                min_speed_kts, max_speed_kts, avg_speed_kts,
+                                start_lat, start_lon, end_lat, end_lon,
+                                total_distance_nm,
+                                squawk_codes, emergency_squawk_detected,
+                                scheduled_departure, scheduled_arrival
+                           ) VALUES (
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s
+                           )
+                        """,
+                        (
+                            flight_id,
+                            metadata.get("callsign"),
+                            metadata.get("flight_number"),
+                            metadata.get("origin_airport"),
+                            metadata.get("destination_airport"),
+                            metadata.get("airline"),
+                            metadata.get("aircraft_type"),
+                            metadata.get("aircraft_model"),
+                            metadata.get("aircraft_registration"),
+                            metadata.get("category"),
+                            metadata.get("is_military", False),
+                            metadata.get("first_seen_ts"),
+                            metadata.get("last_seen_ts"),
+                            metadata.get("flight_duration_sec"),
+                            metadata.get("total_points"),
+                            metadata.get("min_altitude_ft"),
+                            metadata.get("max_altitude_ft"),
+                            metadata.get("avg_altitude_ft"),
+                            metadata.get("min_speed_kts"),
+                            metadata.get("max_speed_kts"),
+                            metadata.get("avg_speed_kts"),
+                            metadata.get("start_lat"),
+                            metadata.get("start_lon"),
+                            metadata.get("end_lat"),
+                            metadata.get("end_lon"),
+                            metadata.get("total_distance_nm"),
+                            metadata.get("squawk_codes"),
+                            metadata.get("emergency_squawk_detected", False),
+                            metadata.get("scheduled_departure"),
+                            metadata.get("scheduled_arrival"),
+                        ),
                     )
-                except Exception:
-                    pass
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                logger.warning(f"Failed to update research DB: {e}")
+                    logger.info(f"[FEEDBACK] Copied flight_metadata to feedback schema")
+
+                # --- 3b. Copy anomaly report to feedback.anomaly_reports ---
+                if anomaly_report_row:
+                    report_json = full_report if isinstance(full_report, (dict, list)) else anomaly_report_row.get("full_report")
+                    if isinstance(report_json, (dict, list)):
+                        report_json = json.dumps(report_json)
+                    cursor.execute(
+                        """INSERT INTO feedback.anomaly_reports (
+                                flight_id, timestamp, full_report, is_anomaly,
+                                severity_cnn, severity_dense,
+                                matched_rule_ids, matched_rule_names, matched_rule_categories,
+                                callsign, airline, origin_airport, destination_airport,
+                                aircraft_type, flight_duration_sec, max_altitude_ft, avg_speed_kts,
+                                nearest_airport, geographic_region, is_military
+                           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            flight_id,
+                            anomaly_report_row.get("timestamp", now_ts),
+                            report_json,
+                            is_anomaly,  # Use the user's feedback
+                            anomaly_report_row.get("severity_cnn"),
+                            anomaly_report_row.get("severity_dense"),
+                            anomaly_report_row.get("matched_rule_ids"),
+                            anomaly_report_row.get("matched_rule_names"),
+                            anomaly_report_row.get("matched_rule_categories"),
+                            anomaly_report_row.get("callsign"),
+                            anomaly_report_row.get("airline"),
+                            anomaly_report_row.get("origin_airport"),
+                            anomaly_report_row.get("destination_airport"),
+                            anomaly_report_row.get("aircraft_type"),
+                            anomaly_report_row.get("flight_duration_sec"),
+                            anomaly_report_row.get("max_altitude_ft"),
+                            anomaly_report_row.get("avg_speed_kts"),
+                            anomaly_report_row.get("nearest_airport"),
+                            anomaly_report_row.get("geographic_region"),
+                            anomaly_report_row.get("is_military"),
+                        ),
+                    )
+                    logger.info(f"[FEEDBACK] Copied anomaly_report to feedback schema")
+
+                # --- 3c. Batch-copy track points to feedback.flight_tracks ---
+                if points:
+                    # Build VALUES clause with placeholders
+                    values_placeholders = []
+                    values_data = []
+                    for pt in points:
+                        values_placeholders.append("(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+                        values_data.extend([
+                            flight_id,
+                            pt.get("timestamp"),
+                            pt.get("lat"),
+                            pt.get("lon"),
+                            pt.get("alt"),
+                            pt.get("gspeed"),
+                            pt.get("vspeed"),
+                            pt.get("track"),
+                            pt.get("squawk"),
+                            pt.get("callsign"),
+                            "feedback",
+                        ])
+                    
+                    values_clause = ",".join(values_placeholders)
+                    cursor.execute(
+                        """INSERT INTO feedback.flight_tracks (
+                                flight_id, timestamp, lat, lon, alt,
+                                gspeed, vspeed, track, squawk, callsign, source
+                           ) VALUES """ + values_clause,
+                        values_data,
+                    )
+                logger.info(f"[FEEDBACK] Batch-copied {len(points)} track points to feedback.flight_tracks")
+
+                # --- 3d. Save user feedback record to feedback.user_feedback ---
+                # Get next id value by querying max(id) and adding 1
+                # This is the simplest approach that works across all partition setups
+                cursor.execute("""
+                    SELECT COALESCE(MAX(id), 0) + 1 FROM feedback.user_feedback
+                """)
+                next_id = cursor.fetchone()[0]
+                
+                logger.info(f"[FEEDBACK] Using id={next_id} for user_feedback")
+                
+                cursor.execute(
+                    """INSERT INTO feedback.user_feedback (
+                            id, flight_id, tagged_at, first_seen_ts, last_seen_ts,
+                            user_label, comments,
+                            rule_id, rule_ids, rule_name, rule_names,
+                            other_details
+                       ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        next_id,
+                        flight_id,
+                        now_ts,
+                        first_seen_ts,
+                        last_seen_ts,
+                        1 if is_anomaly else 0,
+                        comments,
+                        rule_id,
+                        rule_ids,
+                        rule_name,
+                        rule_names if rule_names else None,
+                        other_details,
+                    ),
+                )
+                logger.info(f"[FEEDBACK] Saved user_feedback record")
+
+            conn.commit()
 
     except Exception as e:
-        logger.warning(f"Legacy database updates failed (non-critical): {e}")
+        logger.error(f"[FEEDBACK] Error writing to feedback schema: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save feedback: {str(e)}")
 
-    return {"status": "success", "message": "Feedback saved to feedback_tagged.db"}
+    logger.info(f"[FEEDBACK] Successfully saved tagged flight {flight_id} to PostgreSQL feedback schema "
+                f"(tracks={len(points)}, metadata={'YES' if metadata else 'NO'}, report={'YES' if full_report else 'NO'})")
+
+    return {"status": "success", "message": "Feedback saved to PostgreSQL feedback schema"}
 
