@@ -1987,3 +1987,258 @@ def classify_flights_by_date_range(request: ClassifyFlightsByDateRangeRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# MARINE DATA ANALYSIS
+# ============================================================================
+
+MARINE_SYSTEM_PROMPT_REASONING = """You are a maritime traffic analysis assistant specialized in vessel tracking and marine traffic patterns.
+You analyze vessel positions, tracks, and traffic statistics to provide insights about maritime activity.
+
+Key capabilities:
+- Analyze vessel movements and behaviors
+- Identify traffic patterns and anomalies
+- Provide insights about vessel types and navigation status
+- Answer questions about specific vessels or areas
+- Explain maritime traffic statistics
+
+Be thorough in your analysis. Use the vessel data, positions, and statistics provided to give accurate responses.
+When referencing specific vessels, use their MMSI and name if available.
+Always include 2-4 plausible explanations or details the user might not have considered.
+Use code execution for any calculations."""
+
+MARINE_SYSTEM_PROMPT_FAST = """You are a maritime traffic analysis assistant.
+Answer shortly and to the point about vessel tracking and marine traffic.
+Use the vessel data provided to give accurate responses."""
+
+
+class MarineAnalyzeRequest(BaseModel):
+    """Request for analyzing marine vessel data."""
+    question: str = Field(description="User question about marine data")
+    vessels: Optional[List[Dict[str, Any]]] = Field(default=None, description="List of vessels with positions")
+    vessel_details: Optional[Dict[str, Any]] = Field(default=None, description="Detailed vessel information")
+    track_data: Optional[Dict[str, Any]] = Field(default=None, description="Vessel track history")
+    statistics: Optional[Dict[str, Any]] = Field(default=None, description="Marine traffic statistics")
+    screenshot: Optional[str] = Field(default=None, description="Base64 encoded screenshot of marine map")
+    history: List[Dict[str, str]] = Field(default=[], description="Chat history")
+    language: Optional[str] = Field(default='en', description="Response language (en/he)")
+    mode: Optional[str] = Field(default='thinking', description="Analysis mode: 'fast' (gemini-3-flash), 'thinking' (gemini-3-pro), 'on-prem' (no external tools)")
+
+
+@router.post("/api/ai/analyze-marine")
+def ai_analyze_marine_endpoint(request: MarineAnalyzeRequest):
+    """
+    AI analysis endpoint for marine vessel data.
+    Analyzes vessels, tracks, and statistics using Gemini.
+    """
+    try:
+        logger.info(f"Marine analysis request: {request.question[:100]}, history: {len(request.history)} messages")
+
+        # Prepare image data if screenshot provided
+        image_bytes = None
+        mime_type = "image/png"
+        
+        if request.screenshot:
+            screenshot_data = request.screenshot
+            if screenshot_data.startswith('data:'):
+                try:
+                    header, encoded = screenshot_data.split(",", 1)
+                    mime_type = header.split(":")[1].split(";")[0]
+                    image_bytes = base64.b64decode(encoded)
+                except Exception as e:
+                    logger.error(f"Failed to parse data URL: {e}")
+                    try:
+                        image_bytes = base64.b64decode(screenshot_data)
+                    except:
+                        pass
+            else:
+                try:
+                    image_bytes = base64.b64decode(screenshot_data)
+                except Exception as e:
+                    logger.error(f"Failed to decode base64 screenshot: {e}")
+
+        # Build context from marine data
+        context_parts = []
+        
+        # Add vessel list data
+        if request.vessels:
+            context_parts.append("\n=== VESSEL DATA ===")
+            context_parts.append(f"Total vessels: {len(request.vessels)}")
+            
+            # Sample up to 20 vessels for context
+            sample_size = min(20, len(request.vessels))
+            context_parts.append(f"\nShowing {sample_size} vessels:")
+            for i, vessel in enumerate(request.vessels[:sample_size], 1):
+                mmsi = vessel.get('mmsi', 'Unknown')
+                name = vessel.get('vessel_name', 'Unknown')
+                vessel_type = vessel.get('vessel_type_description', 'Unknown')
+                lat = vessel.get('latitude', 'N/A')
+                lon = vessel.get('longitude', 'N/A')
+                speed = vessel.get('speed_over_ground', 'N/A')
+                course = vessel.get('course_over_ground', 'N/A')
+                status = vessel.get('navigation_status', 'N/A')
+                
+                context_parts.append(f"  {i}. MMSI: {mmsi} | Name: {name} | Type: {vessel_type}")
+                context_parts.append(f"     Position: ({lat}, {lon}) | Speed: {speed} kts | Course: {course}° | Status: {status}")
+        
+        # Add detailed vessel data
+        if request.vessel_details:
+            context_parts.append("\n=== VESSEL DETAILS ===")
+            details = request.vessel_details
+            context_parts.append(f"MMSI: {details.get('mmsi', 'Unknown')}")
+            context_parts.append(f"Name: {details.get('vessel_name', 'Unknown')}")
+            context_parts.append(f"Type: {details.get('vessel_type_description', 'Unknown')}")
+            context_parts.append(f"Callsign: {details.get('callsign', 'Unknown')}")
+            context_parts.append(f"IMO: {details.get('imo_number', 'Unknown')}")
+            context_parts.append(f"Dimensions: {details.get('length', 'N/A')}m x {details.get('width', 'N/A')}m")
+            context_parts.append(f"Draught: {details.get('draught', 'N/A')}m")
+            context_parts.append(f"Destination: {details.get('destination', 'Unknown')}")
+            context_parts.append(f"ETA: {details.get('eta', 'Unknown')}")
+            
+            # Current position
+            if details.get('latitude') and details.get('longitude'):
+                context_parts.append(f"\nCurrent Position:")
+                context_parts.append(f"  Lat/Lon: ({details['latitude']}, {details['longitude']})")
+                context_parts.append(f"  Speed: {details.get('speed_over_ground', 'N/A')} kts")
+                context_parts.append(f"  Course: {details.get('course_over_ground', 'N/A')}°")
+                context_parts.append(f"  Heading: {details.get('heading', 'N/A')}°")
+                context_parts.append(f"  Status: {details.get('navigation_status', 'Unknown')}")
+            
+            context_parts.append(f"\nFirst Seen: {details.get('first_seen', 'Unknown')}")
+            context_parts.append(f"Last Updated: {details.get('last_updated', 'Unknown')}")
+            context_parts.append(f"Total Position Reports: {details.get('total_position_reports', 'N/A')}")
+        
+
+        # Add statistics
+        if request.statistics:
+            context_parts.append("\n=== MARINE TRAFFIC STATISTICS ===")
+            stats = request.statistics
+            
+            period = stats.get('period', {})
+            context_parts.append(f"Time Period: {period.get('from', 'Unknown')} to {period.get('to', 'Unknown')}")
+            context_parts.append(f"Total Vessels: {stats.get('total_vessels', 0)}")
+            context_parts.append(f"Total Position Reports: {stats.get('total_positions', 0)}")
+            
+            # By vessel type
+            by_type = stats.get('by_type', {})
+            if by_type:
+                context_parts.append(f"\nBy Vessel Type:")
+                for vessel_type, count in sorted(by_type.items(), key=lambda x: x[1], reverse=True)[:10]:
+                    context_parts.append(f"  {vessel_type}: {count}")
+            
+            # By navigation status
+            by_status = stats.get('by_status', {})
+            if by_status:
+                context_parts.append(f"\nBy Navigation Status:")
+                for status, count in sorted(by_status.items(), key=lambda x: x[1], reverse=True):
+                    context_parts.append(f"  {status}: {count}")
+
+        context_text = "\n".join(context_parts)
+
+        # Build messages for Gemini
+        messages = []
+        
+        # Add chat history
+        for msg in request.history[-10:]:  # Last 10 messages
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            if role == 'assistant':
+                role = 'model'
+            messages.append({
+                'role': role,
+                'parts': [{'text': content}]
+            })
+
+        # Add current request with context
+        user_parts = []
+        if image_bytes:
+            user_parts.append({
+                'inline_data': {
+                    'mime_type': mime_type,
+                    'data': base64.b64encode(image_bytes).decode('utf-8')
+                }
+            })
+        
+        full_prompt = f"{context_text}\n\n=== USER QUESTION ===\n{request.question}"
+        user_parts.append({'text': full_prompt})
+        
+        messages.append({
+            'role': 'user',
+            'parts': user_parts
+        })
+
+        # Configure tools based on mode
+        tools = []
+        if request.mode != "on-prem":
+            tools.append(_types.Tool(google_search=_types.GoogleSearch()))
+        
+        system_instruction_reasoning = (
+            "Give a good comprehensive answer. "
+            # "Keep in mind the system can be wrong."
+            "Allways answer in hebrew."
+            "Always include 2–4 plausible explanations or details the user might not have considered.\n\n"
+            # "## MAP HIGHLIGHTING ACTIONS\n"
+            # "When you want to point to something on the map, output a JSON action block.\n\n"
+            # "Available Actions:\n"
+            # '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
+            # '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
+            # "Use AT MOST one or two actions per response."
+        )
+
+        system_instruction_fast = (
+            # "Keep in mind the system can be wrong."
+            "Allways answer in hebrew."
+            "Answer shortly and to the point."
+            # "Available Actions:\n"
+            # '1. Highlight a specific point: `{"action": "highlight_point", "lat": 32.1234, "lon": 34.9876}`\n'
+            # '2. Highlight a segment: `{"action": "highlight_segment", "startIndex": 120, "endIndex": 150}`\n\n'
+            # "Use AT MOST one or two actions per response."
+        )
+        # Select system instruction based on mode
+        system_instruction = system_instruction_fast if request.mode in ["fast", "on-prem"] else system_instruction_reasoning
+        
+        # Add code execution instruction for non-on-prem modes
+        full_system_instruction = system_instruction
+
+        # Select model based on mode
+        model_name = "gemini-3-flash-preview" if request.mode in ["fast", "on-prem"] else "gemini-3-pro-preview"
+        
+        logger.info(f"Calling Gemini API with model: {model_name} (mode: {request.mode})...")
+        
+        # Call Gemini
+        import time
+        start_time = time.time()
+        response = _gemini_client.models.generate_content(
+            model=model_name,
+            contents=messages,
+            config=_types.GenerateContentConfig(
+                system_instruction=full_system_instruction,
+                tools=tools if tools else None,
+            )
+        )
+        
+        logger.info(f"Gemini response time: {time.time() - start_time:.2f} seconds")
+
+        answer = response.text if response.text else "I couldn't generate a response."
+        
+        logger.info(f"Marine analysis response generated ({len(answer)} chars)")
+
+        return {
+            "answer": answer,
+            "model": model_name,
+            "mode": request.mode,
+            "context_provided": {
+                "vessels_count": len(request.vessels) if request.vessels else 0,
+                "has_vessel_details": request.vessel_details is not None,
+                "has_track_data": request.track_data is not None,
+                "has_statistics": request.statistics is not None,
+                "has_screenshot": image_bytes is not None
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Marine analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
