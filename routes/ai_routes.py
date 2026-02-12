@@ -1682,7 +1682,7 @@ def get_flight_ai_classification(
 class ClassifyFlightByIdRequest(BaseModel):
     """Request for classifying a single flight by ID."""
     flight_id: str = Field(description="Flight identifier to classify")
-    schema: str = Field(default="research", description="Database schema to use")
+    schema: str = Field(default="feedback", description="Database schema to use (feedback, research, live)")
     force_reclassify: bool = Field(default=False, description="Force re-classification even if already classified")
 
 
@@ -1690,7 +1690,7 @@ class ClassifyFlightsByDateRangeRequest(BaseModel):
     """Request for classifying flights within a date range."""
     start_date: str = Field(description="Start date in YYYY-MM-DD format")
     end_date: str = Field(description="End date in YYYY-MM-DD format")
-    schema: str = Field(default="research", description="Database schema to use")
+    schema: str = Field(default="feedback", description="Database schema to use (feedback, research, live)")
     limit: int = Field(default=100, description="Maximum number of flights to classify")
     force_reclassify: bool = Field(default=False, description="Force re-classification even if already classified")
 
@@ -1720,30 +1720,42 @@ def classify_flight_by_id(request: ClassifyFlightByIdRequest):
         
         logger.info(f"Starting classification for flight {request.flight_id} in schema {request.schema}")
         
-        # Check if already classified (unless force_reclassify is True)
-        if not request.force_reclassify:
-            try:
-                with get_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute(f"""
-                            SELECT COUNT(*) 
-                            FROM {request.schema}.ai_classifications
-                            WHERE flight_id = %s
-                        """, (request.flight_id,))
-                        count = cursor.fetchone()[0]
-                        
-                        if count > 0:
+        # Ensure table exists first (before checking for existing classification)
+        if not create_ai_classifications_table(request.schema):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create or verify ai_classifications table in {request.schema} schema"
+            )
+        
+        # Check if already classified and handle accordingly
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(f"""
+                        SELECT COUNT(*) 
+                        FROM {request.schema}.ai_classifications
+                        WHERE flight_id = %s
+                    """, (request.flight_id,))
+                    count = cursor.fetchone()[0]
+                    
+                    if count > 0:
+                        if not request.force_reclassify:
                             logger.info(f"Flight {request.flight_id} already classified, skipping")
                             return {
                                 "success": True,
                                 "skipped": True,
                                 "message": f"Flight {request.flight_id} already classified. Use force_reclassify=true to override."
                             }
-            except Exception as e:
-                logger.warning(f"Error checking classification status: {e}")
-        
-        # Ensure table exists
-        create_ai_classifications_table(request.schema)
+                        else:
+                            # Delete existing classification to allow re-insert
+                            logger.info(f"Deleting existing classification for {request.flight_id} (force_reclassify=true)")
+                            cursor.execute(f"""
+                                DELETE FROM {request.schema}.ai_classifications
+                                WHERE flight_id = %s
+                            """, (request.flight_id,))
+                            conn.commit()
+        except Exception as e:
+            logger.warning(f"Error checking/deleting classification: {e}")
         
         # Fetch flight data
         logger.info(f"Fetching data for flight {request.flight_id}...")
@@ -1829,10 +1841,14 @@ def classify_flights_by_date_range(request: ClassifyFlightsByDateRangeRequest):
             get_connection
         )
         
-        logger.info(f"Starting batch classification for date range {request.start_date} to {request.end_date}")
+        logger.info(f"Starting batch classification for date range {request.start_date} to {request.end_date} in schema {request.schema}")
         
-        # Ensure table exists
-        create_ai_classifications_table(request.schema)
+        # Ensure table exists first
+        if not create_ai_classifications_table(request.schema):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create or verify ai_classifications table in {request.schema} schema"
+            )
         
         # Fetch flight IDs in date range
         logger.info(f"Fetching unclassified flights in date range...")
@@ -1876,20 +1892,28 @@ def classify_flights_by_date_range(request: ClassifyFlightsByDateRangeRequest):
         def classify_single_flight(flight_id: str) -> Dict[str, Any]:
             """Helper function to classify a single flight."""
             try:
-                # Check if already classified
-                if not request.force_reclassify:
-                    with get_connection() as conn:
-                        with conn.cursor() as cursor:
-                            cursor.execute(f"""
-                                SELECT COUNT(*) 
-                                FROM {request.schema}.ai_classifications
-                                WHERE flight_id = %s
-                            """, (flight_id,))
-                            count = cursor.fetchone()[0]
-                            
-                            if count > 0:
+                # Check if already classified and handle accordingly
+                with get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT COUNT(*) 
+                            FROM {request.schema}.ai_classifications
+                            WHERE flight_id = %s
+                        """, (flight_id,))
+                        count = cursor.fetchone()[0]
+                        
+                        if count > 0:
+                            if not request.force_reclassify:
                                 logger.info(f"Flight {flight_id} already classified, skipping")
                                 return {'flight_id': flight_id, 'skipped': True, 'success': True}
+                            else:
+                                # Delete existing classification to allow re-insert
+                                logger.info(f"Deleting existing classification for {flight_id} (force_reclassify=true)")
+                                cursor.execute(f"""
+                                    DELETE FROM {request.schema}.ai_classifications
+                                    WHERE flight_id = %s
+                                """, (flight_id,))
+                                conn.commit()
                 
                 # Fetch flight data
                 logger.info(f"Fetching data for flight {flight_id}...")

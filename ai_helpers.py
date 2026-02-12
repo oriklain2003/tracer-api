@@ -221,7 +221,8 @@ def generate_flight_map(
         return image_bytes
         
     except ImportError as e:
-        logger.error(f"Missing required library for map generation: {e}")
+        logger.warning(f"Optional library matplotlib not available for map generation: {e}")
+        logger.info("Map generation will be skipped. Install matplotlib with: pip install matplotlib")
         return None
     except Exception as e:
         logger.error(f"Error generating flight map: {e}")

@@ -1,0 +1,12 @@
+# Optional dependencies for AI classification features
+# Install with: pip install -r requirements-ai.txt
+
+# For map visualization in AI classifications
+matplotlib>=3.5.0
+numpy>=1.21.0
+
+# Already required (should be in main requirements.txt)
+# google-genai
+# psycopg2-binary
+# fastapi
+# pydantic

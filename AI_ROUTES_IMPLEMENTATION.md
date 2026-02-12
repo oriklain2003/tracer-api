@@ -34,8 +34,9 @@ This document describes the implementation of two new API routes for AI-powered 
 **Features:**
 - Fetches flight data, metadata, and anomaly report from database
 - Sends to Gemini AI for classification
-- Saves result to database
+- Saves result to database (simple INSERT, no upsert)
 - Skips already classified flights (unless `force_reclassify=true`)
+- When `force_reclassify=true`: deletes existing classification before re-classifying
 - Returns concise 3-6 word root cause summary
 
 ---
@@ -221,6 +222,23 @@ The code falls back to a hardcoded API key if `GEMINI_API_KEY` is not set (same 
 
 ---
 
+## Optional Dependencies
+
+For map visualization in AI classifications, install matplotlib:
+
+```bash
+pip install -r requirements-ai.txt
+```
+
+Or manually:
+```bash
+pip install matplotlib numpy
+```
+
+**Note:** Map generation is optional. If matplotlib is not available, the AI will still classify flights but without the map image in the context.
+
+---
+
 ## Files Modified/Created
 
 ### Created:
@@ -242,8 +260,69 @@ The code falls back to a hardcoded API key if `GEMINI_API_KEY` is not set (same 
 
 3. **Idempotency:** Both routes check for existing classifications and skip them by default, making them safe to run multiple times.
 
-4. **Schemas:** Both routes support different database schemas (`live`, `research`, `feedback`) to work with different datasets.
+4. **Schemas:** Both routes support different database schemas (`live`, `research`, `feedback`) to work with different datasets. **Default is now `feedback`** which is the most commonly used schema.
 
 5. **AI Model:** Uses `gemini-3-flash-preview` model with the same system instruction as in the original scripts (3-6 word root cause summaries).
 
 6. **Database Integration:** All results are persisted to PostgreSQL for tracking and analysis.
+
+---
+
+## Troubleshooting
+
+### Database Constraint Error
+
+**Error:** `there is no unique or exclusion constraint matching the ON CONFLICT specification`
+
+**Solution:** This error has been fixed! The code now:
+1. Uses simple INSERT instead of ON CONFLICT
+2. Automatically creates PRIMARY KEY constraint
+3. Deletes existing records before re-classifying when `force_reclassify=true`
+
+If you created the table manually without a primary key, the code will try to add it automatically. If that fails, manually drop and recreate:
+
+```sql
+-- Be careful - this deletes all classifications!
+DROP TABLE IF EXISTS feedback.ai_classifications;
+
+-- The code will recreate it properly on next run
+```
+
+### Missing Matplotlib
+
+**Error:** `Missing required library for map generation: No module named 'matplotlib'`
+
+**Solution:** This is optional. Install with:
+
+```bash
+pip install matplotlib numpy
+```
+
+Or skip map visualization - the AI will still work without it.
+
+### Wrong Schema
+
+**Error:** `Flight data not found` or `No track points found`
+
+**Solution:** Make sure you're using the correct schema:
+- `feedback` - For tagged/feedback flights (most common)
+- `research` - For research flights
+- `live` - For live monitoring flights
+
+Check which schema your flight is in:
+
+```sql
+SELECT 'feedback' as schema, COUNT(*) 
+FROM feedback.flight_metadata 
+WHERE flight_id = 'YOUR_FLIGHT_ID'
+UNION ALL
+SELECT 'research' as schema, COUNT(*) 
+FROM research.flight_metadata 
+WHERE flight_id = 'YOUR_FLIGHT_ID';
+```
+
+### API Key Issues
+
+**Error:** `Failed to initialize Gemini client`
+
+**Solution:** Make sure `GEMINI_API_KEY` environment variable is set, or the hardcoded fallback key is valid.

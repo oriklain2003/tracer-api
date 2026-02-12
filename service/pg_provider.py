@@ -9,11 +9,12 @@ Uses singleton pattern for connection pool management to prevent resource exhaus
 
 import psycopg2
 import psycopg2.extras
-from psycopg2 import pool
+from psycopg2 import pool, sql
 import json
 import logging
 import os
 import threading
+from threading import Semaphore
 import atexit
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -49,11 +50,16 @@ class PostgreSQLConnectionPool:
         raise ValueError("POSTGRES_DSN environment variable is required")
     
     # Pool configuration - loaded from environment or defaults
-    # LOW traffic: MIN=2, MAX=5
-    # MEDIUM traffic: MIN=5, MAX=15  
-    # HIGH traffic: MIN=10, MAX=30
-    MIN_CONNECTIONS = int(os.environ.get("PG_POOL_MIN_CONNECTIONS", "2"))
-    MAX_CONNECTIONS = int(os.environ.get("PG_POOL_MAX_CONNECTIONS", "10"))
+    # LOW traffic: MIN=2, MAX=10
+    # MEDIUM traffic: MIN=5, MAX=25 (default)
+    # HIGH traffic: MIN=10, MAX=50
+    # VERY HIGH traffic: Consider external pooler like PgBouncer
+    MIN_CONNECTIONS = int(os.environ.get("PG_POOL_MIN_CONNECTIONS", "5"))
+    MAX_CONNECTIONS = int(os.environ.get("PG_POOL_MAX_CONNECTIONS", "25"))
+    
+    # Connection acquisition timeout (seconds) - how long to wait for available connection
+    # Requests will wait this long before raising PoolError if pool is exhausted
+    POOL_TIMEOUT = int(os.environ.get("PG_POOL_TIMEOUT", "30"))
     
     def __new__(cls):
         """Singleton pattern - only create one instance."""
@@ -79,6 +85,11 @@ class PostgreSQLConnectionPool:
                 connect_timeout = int( "10")
                 statement_timeout = int( "30000")
                 
+                # Create semaphore to implement blocking behavior for connection acquisition
+                # Without this, ThreadedConnectionPool.getconn() raises PoolError immediately
+                # when pool is exhausted instead of waiting for available connection
+                self._semaphore = Semaphore(self.MAX_CONNECTIONS)
+                
                 self._pool = psycopg2.pool.ThreadedConnectionPool(
                     self.MIN_CONNECTIONS,
                     self.MAX_CONNECTIONS,
@@ -88,7 +99,7 @@ class PostgreSQLConnectionPool:
                     options=f'-c statement_timeout={statement_timeout}'
                 )
                 self.__class__._initialized = True
-                logger.info(f"PostgreSQL connection pool initialized (min={self.MIN_CONNECTIONS}, max={self.MAX_CONNECTIONS})")
+                logger.info(f"PostgreSQL connection pool initialized (min={self.MIN_CONNECTIONS}, max={self.MAX_CONNECTIONS}, timeout={self.POOL_TIMEOUT}s)")
                 
                 # Register cleanup on exit
                 atexit.register(self.close_all)
@@ -104,14 +115,29 @@ class PostgreSQLConnectionPool:
         
         Ensures connections are always returned to the pool, even on exceptions.
         Dead connections are properly closed and not returned to the pool.
+        
+        Implements blocking behavior with timeout - if pool is exhausted, requests
+        will wait up to POOL_TIMEOUT seconds for a connection to become available.
         """
         if not self.__class__._initialized:
             raise RuntimeError("Connection pool not initialized")
         
         conn = None
         connection_returned = False
+        semaphore_acquired = False
         
         try:
+            # Acquire semaphore with timeout - implements blocking/queuing behavior
+            # Without this, ThreadedConnectionPool would raise PoolError immediately
+            semaphore_acquired = self._semaphore.acquire(timeout=self.POOL_TIMEOUT)
+            
+            if not semaphore_acquired:
+                # Timeout expired waiting for connection
+                raise pool.PoolError(
+                    f"Connection pool exhausted: timeout after {self.POOL_TIMEOUT}s waiting for available connection. "
+                    f"Pool size: {self.MAX_CONNECTIONS}. Consider increasing PG_POOL_MAX_CONNECTIONS."
+                )
+            
             conn = self._pool.getconn()
             
             # Validate connection is alive
@@ -157,7 +183,7 @@ class PostgreSQLConnectionPool:
             raise
             
         finally:
-            # Only runs if conn wasn't already returned
+            # Return connection to pool first
             if conn is not None and not connection_returned:
                 try:
                     if conn.closed:
@@ -174,9 +200,8 @@ class PostgreSQLConnectionPool:
                             logger.error(f"Error during rollback: {rollback_ex}")
                             # If rollback fails, connection might be dead
                             self._pool.putconn(conn, close=True)
-                            return
-                        
-                        self._pool.putconn(conn)
+                        else:
+                            self._pool.putconn(conn)
                 except Exception as e:
                     logger.error(f"Error in finally block returning connection: {e}")
                     # Last resort: try to close the connection
@@ -184,6 +209,10 @@ class PostgreSQLConnectionPool:
                         self._pool.putconn(conn, close=True)
                     except Exception:
                         pass
+            
+            # Always release semaphore to unblock waiting requests
+            if semaphore_acquired:
+                self._semaphore.release()
     
     def close_all(self):
         """Close all connections in the pool."""
@@ -1118,80 +1147,110 @@ def create_ai_classifications_table(schema: str = 'live') -> bool:
     try:
         with get_connection() as conn:
             with conn.cursor() as cursor:
+                # First check if table exists
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {schema}.ai_classifications (
-                        flight_id TEXT PRIMARY KEY,
-                        classification_text TEXT,
-                        confidence_score FLOAT,
-                        processing_time_sec FLOAT,
-                        error_message TEXT,
-                        gemini_model TEXT,
-                        full_response TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = %s 
+                        AND table_name = 'ai_classifications'
                     )
-                """)
+                """, (schema,))
+                
+                table_exists = cursor.fetchone()[0]
+                
+                if not table_exists:
+                    # Create table with proper primary key
+                    cursor.execute(f"""
+                        CREATE TABLE {schema}.ai_classifications (
+                            flight_id TEXT NOT NULL,
+                            classification_text TEXT,
+                            confidence_score FLOAT,
+                            processing_time_sec FLOAT,
+                            error_message TEXT,
+                            gemini_model TEXT,
+                            full_response TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT ai_classifications_pkey PRIMARY KEY (flight_id)
+                        )
+                    """)
+                    logger.info(f"Created ai_classifications table in {schema} schema")
+                else:
+                    # Table exists, verify it has a primary key
+                    cursor.execute(f"""
+                        SELECT constraint_name
+                        FROM information_schema.table_constraints
+                        WHERE table_schema = %s
+                        AND table_name = 'ai_classifications'
+                        AND constraint_type = 'PRIMARY KEY'
+                    """, (schema,))
+                    
+                    pk_exists = cursor.fetchone()
+                    
+                    if not pk_exists:
+                        # Add primary key if missing
+                        logger.warning(f"Adding missing PRIMARY KEY to {schema}.ai_classifications")
+                        cursor.execute(f"""
+                            ALTER TABLE {schema}.ai_classifications
+                            ADD CONSTRAINT ai_classifications_pkey PRIMARY KEY (flight_id)
+                        """)
+                    
+                    logger.info(f"Verified ai_classifications table in {schema} schema")
+                
                 conn.commit()
-                logger.info(f"Ensured ai_classifications table exists in {schema} schema")
                 return True
     except Exception as e:
-        logger.error(f"Error creating ai_classifications table: {e}")
+        logger.error(f"Error creating ai_classifications table: {e}", exc_info=True)
         return False
 
 
 def save_ai_classification(
-    flight_id: str,
-    classification: Dict[str, Any],
+    flight_id: str, 
+    classification: Dict[str, Any], 
     schema: str = 'live'
 ) -> bool:
     """
-    Save AI classification result to database.
+    Save AI classification result to PostgreSQL.
     
     Args:
         flight_id: Flight identifier
-        classification: Dict containing classification results
-        schema: Database schema
+        classification: Dictionary containing:
+            - classification_text: 3-6 word summary
+            - confidence_score: Optional confidence value
+            - full_response: Complete AI response
+            - processing_time_sec: Time taken for classification
+            - error_message: Error message if failed
+            - gemini_model: Model name used
+        schema: Schema name (default: 'live')
     
     Returns:
-        True if successful, False otherwise
+        bool: Success status
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(f"""
-                    INSERT INTO {schema}.ai_classifications (
-                        flight_id,
-                        classification_text,
-                        confidence_score,
-                        processing_time_sec,
-                        error_message,
-                        gemini_model,
-                        full_response,
-                        created_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
-                    )
-                    ON CONFLICT (flight_id) DO UPDATE SET
-                        classification_text = EXCLUDED.classification_text,
-                        confidence_score = EXCLUDED.confidence_score,
-                        processing_time_sec = EXCLUDED.processing_time_sec,
-                        error_message = EXCLUDED.error_message,
-                        gemini_model = EXCLUDED.gemini_model,
-                        full_response = EXCLUDED.full_response,
-                        created_at = EXCLUDED.created_at
-                """, (
+                insert_query = sql.SQL("""
+                    INSERT INTO {}.ai_classifications (
+                        flight_id, classification_text, confidence_score, 
+                        full_response, processing_time_sec, error_message, gemini_model
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """).format(sql.Identifier(schema))
+                
+                cursor.execute(insert_query, (
                     flight_id,
                     classification.get('classification_text'),
                     classification.get('confidence_score'),
+                    classification.get('full_response'),
                     classification.get('processing_time_sec'),
                     classification.get('error_message'),
-                    classification.get('gemini_model', 'gemini-3-flash-preview'),
-                    classification.get('full_response')
+                    classification.get('gemini_model', 'gemini-3-flash-preview')
                 ))
+                
                 conn.commit()
-                logger.debug(f"Saved AI classification for {flight_id}")
+                logger.info(f"Saved AI classification for flight {flight_id}")
                 return True
+                
     except Exception as e:
-        logger.error(f"Error saving AI classification: {e}")
+        logger.error(f"Failed to save AI classification for {flight_id}: {e}")
         return False
 
 
@@ -1239,8 +1298,14 @@ def fetch_flight_data_for_classification(
                 
                 metadata = dict(metadata_row)
                 
-                # Fetch track points
-                track_table = "flight_tracks" if schema == "feedback" else "normal_tracks"
+                # Fetch track points - use appropriate table based on schema
+                if schema == "feedback":
+                    track_table = "flight_tracks"
+                elif schema == "research":
+                    track_table = "normal_tracks"
+                else:
+                    track_table = "normal_tracks"
+                
                 cursor.execute(f"""
                     SELECT timestamp, lat, lon, alt, gspeed, vspeed, track, squawk, callsign
                     FROM {schema}.{track_table}

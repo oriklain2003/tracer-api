@@ -24,7 +24,7 @@ class AIClassifier:
     Runs classifications in background threads to avoid blocking the monitor.
     """
     
-    SYSTEM_INSTRUCTION = """As an expert aviation data analyst, your core mission is to perform a surgical inference of the root cause by correlating the detected flight anomaly with the provided environmental context. You must move beyond simple observation to determine exactly why the anomaly was a logical necessity or a specific response to the surrounding conditions, ensuring that the environmental data justifies the flight behavior. It is critical that your final output is restricted to a professional summary of exactly three to six words, providing only the ultimate root cause without any introductory phrases, filler text, or repetition of the input."""
+    SYSTEM_INSTRUCTION = """As an expert aviation data analyst, your core mission is to perform a surgical inference of the root cause by correlating the detected flight anomaly with the provided environmental context. You must move beyond simple observation to determine exactly why the anomaly was a logical necessity or a specific response to the surrounding conditions, ensuring that the environmental data justifies the flight behavior. It is critical that your final output is restricted to a professional summary of exactly three to six words, providing only the ultimate root cause without any introductory phrases, filler text, or repetition of the input. if the callsign is SHAHD it dosent mean that its a uav it can be any other platform"""
     
     def __init__(self, gemini_api_key: str, schema: str = 'live', max_workers: int = 2):
         """
