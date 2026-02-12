@@ -35,7 +35,7 @@ DEFAULT_HORIZONTAL_NM = 5
 
 # Boundary expansion config
 AVG_AIRCRAFT_SPEED_MPH = 550  # Average speed for boundary calculations
-BASE_DURATION_THRESHOLD_MIN = 20  # Minutes before we start expanding boundary
+BASE_DURATION_THRESHOLD_MIN = 30  # Minutes before we start expanding boundary
 STATUTE_MILES_TO_NM = 0.868976  # Conversion factor
 
 

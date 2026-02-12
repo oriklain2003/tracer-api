@@ -361,6 +361,7 @@ from routes.route_planning import router as route_planning_router, configure as 
 from routes.trajectory_planner import router as trajectory_router, configure as configure_trajectory
 from routes.users import router as users_router, configure as configure_users
 from routes.manual_route_planner import router as manual_route_planner_router, configure as configure_manual_route_planner
+from routes.marine_routes import router as marine_router
 
 # Configure users router first (authentication and user management)
 configure_users(pg_pool=pg_pool)
@@ -483,6 +484,7 @@ app.include_router(route_planning_router)  # /api/route-check/*
 app.include_router(manual_route_planner_router)  # /api/route/manual/*
 app.include_router(trajectory_router)  # /api/trajectory/*
 app.include_router(users_router)  # /api/auth/*, /api/users/*
+app.include_router(marine_router)  # /api/marine/*
 
 # ============================================================================
 # MONITOR CONTROL (Database-based, not subprocess)
@@ -727,6 +729,7 @@ def root():
             "weather": "/api/weather/*",
             "rules": "/api/rules/*",
             "learned_layers": "/api/learned-layers",
+            "marine": "/api/marine/*",
             "health": "/api/health",
             "auth": "/api/auth/*",
             "users": "/api/users/*",
