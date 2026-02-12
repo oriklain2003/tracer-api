@@ -583,15 +583,22 @@ def analyze_flight_from_db_endpoint(flight_id: str):
 @router.get("/api/live/anomalies")
 def get_live_anomalies(start_ts: int, end_ts: int):
     """
-    Fetch anomalies from PostgreSQL live schema within a time range.
+    Fetch anomalies from PostgreSQL live schema from the last 24 hours.
     This is populated by realtime/monitor.py.
+    Note: start_ts and end_ts parameters are ignored - always returns last 24 hours.
     """
     try:
         from service.pg_provider import get_connection
         from core.airport_lookup import enrich_origin_destination
         import psycopg2.extras
+        import time
         
-        logger.info(f"[LIVE_ANOMALIES] Fetching from PostgreSQL live schema for range {start_ts} to {end_ts}")
+        # Override parameters to always use last 24 hours
+        end_ts = int(time.time()) + (3 * 60 * 60) # 3 hours from now
+        start_ts = end_ts - (24 * 60 * 60)  # 24 hours ago
+        
+        
+        logger.info(f"[LIVE_ANOMALIES] Fetching from PostgreSQL live schema for last 24 hours: {start_ts} to {end_ts}")
         
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:

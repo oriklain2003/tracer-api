@@ -1196,7 +1196,7 @@ def ai_analyze_endpoint(request: AIAnalyzeRequest):
             "Give a good comprehensive answer. "
             # "Keep in mind the system can be wrong."
             "Allways answer in hebrew."
-            "Try to add to the answer something that the user didnt think of and will be suprised by"
+            "The provided image is a cutoff for the system boundery box that includes the flight path over a map, use it to understand the flight path and the anomalies"
             "The system summery is llm that reasoned about the data and made research, trust it and build the answer around it" if additional_data else ""
             "Always include 2–4 plausible explanations or details the user might not have considered.\n\n"
             # "## MAP HIGHLIGHTING ACTIONS\n"
@@ -1676,4 +1676,314 @@ def get_flight_ai_classification(
         raise
     except Exception as e:
         logger.error(f"Error fetching AI classification for {flight_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ClassifyFlightByIdRequest(BaseModel):
+    """Request for classifying a single flight by ID."""
+    flight_id: str = Field(description="Flight identifier to classify")
+    schema: str = Field(default="research", description="Database schema to use")
+    force_reclassify: bool = Field(default=False, description="Force re-classification even if already classified")
+
+
+class ClassifyFlightsByDateRangeRequest(BaseModel):
+    """Request for classifying flights within a date range."""
+    start_date: str = Field(description="Start date in YYYY-MM-DD format")
+    end_date: str = Field(description="End date in YYYY-MM-DD format")
+    schema: str = Field(default="research", description="Database schema to use")
+    limit: int = Field(default=100, description="Maximum number of flights to classify")
+    force_reclassify: bool = Field(default=False, description="Force re-classification even if already classified")
+
+
+@router.post("/api/ai/classify-flight")
+def classify_flight_by_id(request: ClassifyFlightByIdRequest):
+    """
+    Classify a single flight by flight ID.
+    
+    Retrieves flight data from the database, sends to AI for classification,
+    and writes the result back to the database.
+    
+    Args:
+        request: ClassifyFlightByIdRequest with flight_id, schema, and force_reclassify
+    
+    Returns:
+        Classification result with flight_id, classification_text, processing time, etc.
+    """
+    try:
+        import os
+        from ai_classify import AIClassifier
+        from service.pg_provider import (
+            fetch_flight_data_for_classification,
+            create_ai_classifications_table,
+            get_connection
+        )
+        
+        logger.info(f"Starting classification for flight {request.flight_id} in schema {request.schema}")
+        
+        # Check if already classified (unless force_reclassify is True)
+        if not request.force_reclassify:
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT COUNT(*) 
+                            FROM {request.schema}.ai_classifications
+                            WHERE flight_id = %s
+                        """, (request.flight_id,))
+                        count = cursor.fetchone()[0]
+                        
+                        if count > 0:
+                            logger.info(f"Flight {request.flight_id} already classified, skipping")
+                            return {
+                                "success": True,
+                                "skipped": True,
+                                "message": f"Flight {request.flight_id} already classified. Use force_reclassify=true to override."
+                            }
+            except Exception as e:
+                logger.warning(f"Error checking classification status: {e}")
+        
+        # Ensure table exists
+        create_ai_classifications_table(request.schema)
+        
+        # Fetch flight data
+        logger.info(f"Fetching data for flight {request.flight_id}...")
+        flight_bundle = fetch_flight_data_for_classification(request.flight_id, request.schema)
+        
+        if not flight_bundle:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Flight {request.flight_id} not found or has no data"
+            )
+        
+        # Initialize AI classifier
+        api_key = os.getenv("GEMINI_API_KEY", "AIzaSyBArSFAlxqm-9q1hWbaNgeT7f3WMOqF5Go")
+        classifier = AIClassifier(api_key, schema=request.schema, max_workers=1)
+        
+        # Classify synchronously
+        logger.info(f"Classifying flight {request.flight_id}...")
+        start_time = time.time()
+        
+        result = classifier._classify_sync(
+            flight_id=flight_bundle['flight_id'],
+            flight_data=flight_bundle['flight_data'],
+            anomaly_report=flight_bundle['anomaly_report'],
+            metadata=flight_bundle['metadata']
+        )
+        
+        # Shutdown classifier
+        classifier.shutdown(wait=True)
+        
+        elapsed = time.time() - start_time
+        
+        if result.get('error_message'):
+            logger.error(f"Classification failed: {result['error_message']}")
+            return {
+                "success": False,
+                "flight_id": request.flight_id,
+                "error": result['error_message'],
+                "processing_time_sec": elapsed
+            }
+        
+        logger.info(f"Classification completed: '{result.get('classification_text')}' ({elapsed:.2f}s)")
+        
+        return {
+            "success": True,
+            "flight_id": request.flight_id,
+            "classification_text": result.get('classification_text'),
+            "processing_time_sec": result.get('processing_time_sec'),
+            "gemini_model": result.get('gemini_model'),
+            "message": "Flight classified successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error classifying flight {request.flight_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/ai/classify-flights-by-date")
+def classify_flights_by_date_range(request: ClassifyFlightsByDateRangeRequest):
+    """
+    Classify multiple flights within a date range.
+    
+    Retrieves unclassified anomaly flights from the specified date range,
+    sends each to AI for classification, and writes results to the database.
+    
+    Args:
+        request: ClassifyFlightsByDateRangeRequest with start_date, end_date, schema, limit, and force_reclassify
+    
+    Returns:
+        Summary with total flights, success count, failed count, and processing time
+    """
+    try:
+        import os
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ai_classify import AIClassifier
+        from service.pg_provider import (
+            fetch_flights_in_date_range,
+            fetch_flight_data_for_classification,
+            create_ai_classifications_table,
+            get_connection
+        )
+        
+        logger.info(f"Starting batch classification for date range {request.start_date} to {request.end_date}")
+        
+        # Ensure table exists
+        create_ai_classifications_table(request.schema)
+        
+        # Fetch flight IDs in date range
+        logger.info(f"Fetching unclassified flights in date range...")
+        flight_ids = fetch_flights_in_date_range(
+            request.start_date,
+            request.end_date,
+            request.schema,
+            request.limit
+        )
+        
+        if not flight_ids:
+            return {
+                "success": True,
+                "total": 0,
+                "classified": 0,
+                "skipped": 0,
+                "failed": 0,
+                "message": "No unclassified anomalies found in the specified date range"
+            }
+        
+        logger.info(f"Found {len(flight_ids)} flights to classify")
+        
+        # Initialize AI classifier
+        api_key = os.getenv("GEMINI_API_KEY", "AIzaSyBArSFAlxqm-9q1hWbaNgeT7f3WMOqF5Go")
+        classifier = AIClassifier(api_key, schema=request.schema, max_workers=1)
+        
+        # Track results
+        results = {
+            'total': len(flight_ids),
+            'classified': 0,
+            'skipped': 0,
+            'failed': 0,
+            'errors': []
+        }
+        
+        start_time = time.time()
+        
+        # Process flights with ThreadPoolExecutor
+        max_workers = 2  # Parallel processing
+        
+        def classify_single_flight(flight_id: str) -> Dict[str, Any]:
+            """Helper function to classify a single flight."""
+            try:
+                # Check if already classified
+                if not request.force_reclassify:
+                    with get_connection() as conn:
+                        with conn.cursor() as cursor:
+                            cursor.execute(f"""
+                                SELECT COUNT(*) 
+                                FROM {request.schema}.ai_classifications
+                                WHERE flight_id = %s
+                            """, (flight_id,))
+                            count = cursor.fetchone()[0]
+                            
+                            if count > 0:
+                                logger.info(f"Flight {flight_id} already classified, skipping")
+                                return {'flight_id': flight_id, 'skipped': True, 'success': True}
+                
+                # Fetch flight data
+                logger.info(f"Fetching data for flight {flight_id}...")
+                flight_bundle = fetch_flight_data_for_classification(flight_id, request.schema)
+                
+                if not flight_bundle:
+                    return {
+                        'flight_id': flight_id,
+                        'success': False,
+                        'error': 'Flight data not found'
+                    }
+                
+                # Classify
+                logger.info(f"Classifying flight {flight_id}...")
+                result = classifier._classify_sync(
+                    flight_id=flight_bundle['flight_id'],
+                    flight_data=flight_bundle['flight_data'],
+                    anomaly_report=flight_bundle['anomaly_report'],
+                    metadata=flight_bundle['metadata']
+                )
+                
+                if result.get('error_message'):
+                    return {
+                        'flight_id': flight_id,
+                        'success': False,
+                        'error': result['error_message']
+                    }
+                
+                logger.info(f"Successfully classified {flight_id}: '{result.get('classification_text')}'")
+                return {
+                    'flight_id': flight_id,
+                    'success': True,
+                    'classification_text': result.get('classification_text')
+                }
+                
+            except Exception as e:
+                logger.error(f"Error classifying flight {flight_id}: {e}")
+                return {
+                    'flight_id': flight_id,
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # Process flights in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_flight = {
+                executor.submit(classify_single_flight, fid): fid
+                for fid in flight_ids
+            }
+            
+            for future in as_completed(future_to_flight):
+                flight_id = future_to_flight[future]
+                try:
+                    result = future.result()
+                    
+                    if result.get('skipped'):
+                        results['skipped'] += 1
+                    elif result.get('success'):
+                        results['classified'] += 1
+                    else:
+                        results['failed'] += 1
+                        results['errors'].append({
+                            'flight_id': flight_id,
+                            'error': result.get('error', 'Unknown error')
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Exception processing flight {flight_id}: {e}")
+                    results['failed'] += 1
+                    results['errors'].append({
+                        'flight_id': flight_id,
+                        'error': str(e)
+                    })
+        
+        # Cleanup
+        classifier.shutdown(wait=True)
+        
+        elapsed = time.time() - start_time
+        
+        logger.info(f"Batch classification complete: {results['classified']} classified, {results['skipped']} skipped, {results['failed']} failed in {elapsed:.1f}s")
+        
+        return {
+            "success": True,
+            "total": results['total'],
+            "classified": results['classified'],
+            "skipped": results['skipped'],
+            "failed": results['failed'],
+            "processing_time_sec": elapsed,
+            "errors": results['errors'][:10] if results['errors'] else [],  # Return first 10 errors
+            "message": f"Classified {results['classified']} flights, skipped {results['skipped']}, failed {results['failed']}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in batch classification: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

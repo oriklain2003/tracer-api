@@ -788,7 +788,7 @@ def test_connection() -> bool:
 # LIVE RESEARCH DATA (Real-time monitoring)
 # ============================================================================
 
-def get_all_live_flights(cutoff_minutes: int = 15) -> Dict[str, Any]:
+def get_all_live_flights(cutoff_minutes: int = 120) -> Dict[str, Any]:
     """
     Get all currently active flights from live_research schema.
     
@@ -1103,3 +1103,230 @@ def save_anomaly_report(report: Dict[str, Any], last_ts: int, metadata: Dict[str
     except Exception as e:
         logger.error(f"Error saving anomaly report to PostgreSQL: {e}", exc_info=True)
         return False
+
+
+def create_ai_classifications_table(schema: str = 'live') -> bool:
+    """
+    Create ai_classifications table if it doesn't exist.
+    
+    Args:
+        schema: Database schema to create table in
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {schema}.ai_classifications (
+                        flight_id TEXT PRIMARY KEY,
+                        classification_text TEXT,
+                        confidence_score FLOAT,
+                        processing_time_sec FLOAT,
+                        error_message TEXT,
+                        gemini_model TEXT,
+                        full_response TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+                logger.info(f"Ensured ai_classifications table exists in {schema} schema")
+                return True
+    except Exception as e:
+        logger.error(f"Error creating ai_classifications table: {e}")
+        return False
+
+
+def save_ai_classification(
+    flight_id: str,
+    classification: Dict[str, Any],
+    schema: str = 'live'
+) -> bool:
+    """
+    Save AI classification result to database.
+    
+    Args:
+        flight_id: Flight identifier
+        classification: Dict containing classification results
+        schema: Database schema
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    INSERT INTO {schema}.ai_classifications (
+                        flight_id,
+                        classification_text,
+                        confidence_score,
+                        processing_time_sec,
+                        error_message,
+                        gemini_model,
+                        full_response,
+                        created_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (flight_id) DO UPDATE SET
+                        classification_text = EXCLUDED.classification_text,
+                        confidence_score = EXCLUDED.confidence_score,
+                        processing_time_sec = EXCLUDED.processing_time_sec,
+                        error_message = EXCLUDED.error_message,
+                        gemini_model = EXCLUDED.gemini_model,
+                        full_response = EXCLUDED.full_response,
+                        created_at = EXCLUDED.created_at
+                """, (
+                    flight_id,
+                    classification.get('classification_text'),
+                    classification.get('confidence_score'),
+                    classification.get('processing_time_sec'),
+                    classification.get('error_message'),
+                    classification.get('gemini_model', 'gemini-3-flash-preview'),
+                    classification.get('full_response')
+                ))
+                conn.commit()
+                logger.debug(f"Saved AI classification for {flight_id}")
+                return True
+    except Exception as e:
+        logger.error(f"Error saving AI classification: {e}")
+        return False
+
+
+def fetch_flight_data_for_classification(
+    flight_id: str,
+    schema: str = 'research'
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch all necessary data for a flight classification.
+    
+    Args:
+        flight_id: Flight identifier
+        schema: Database schema
+    
+    Returns:
+        Dict containing flight_data, metadata, and anomaly_report, or None if not found
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                # Fetch flight metadata
+                cursor.execute(f"""
+                    SELECT 
+                        flight_id, callsign, flight_number, airline, airline_code,
+                        aircraft_type, aircraft_model, aircraft_registration,
+                        origin_airport, destination_airport,
+                        first_seen_ts, last_seen_ts, flight_duration_sec,
+                        total_distance_nm, total_points,
+                        min_altitude_ft, max_altitude_ft, avg_altitude_ft, cruise_altitude_ft,
+                        min_speed_kts, max_speed_kts, avg_speed_kts,
+                        start_lat, start_lon, end_lat, end_lon,
+                        squawk_codes, emergency_squawk_detected,
+                        is_anomaly, is_military, military_type,
+                        flight_phase_summary, nearest_airport_start, nearest_airport_end,
+                        crossed_borders, signal_loss_events, data_quality_score,
+                        category
+                    FROM {schema}.flight_metadata
+                    WHERE flight_id = %s
+                """, (flight_id,))
+                
+                metadata_row = cursor.fetchone()
+                if not metadata_row:
+                    logger.warning(f"Flight {flight_id} not found in {schema}.flight_metadata")
+                    return None
+                
+                metadata = dict(metadata_row)
+                
+                # Fetch track points
+                track_table = "flight_tracks" if schema == "feedback" else "normal_tracks"
+                cursor.execute(f"""
+                    SELECT timestamp, lat, lon, alt, gspeed, vspeed, track, squawk, callsign
+                    FROM {schema}.{track_table}
+                    WHERE flight_id = %s
+                    ORDER BY timestamp
+                """, (flight_id,))
+                
+                track_rows = cursor.fetchall()
+                if not track_rows:
+                    logger.warning(f"No track points found for flight {flight_id}")
+                    return None
+                
+                flight_data = [dict(row) for row in track_rows]
+                
+                # Fetch anomaly report
+                cursor.execute(f"""
+                    SELECT full_report
+                    FROM {schema}.anomaly_reports
+                    WHERE flight_id = %s
+                """, (flight_id,))
+                
+                report_row = cursor.fetchone()
+                if not report_row or not report_row['full_report']:
+                    logger.warning(f"No anomaly report found for flight {flight_id}")
+                    # Create minimal report structure
+                    anomaly_report = {
+                        'summary': {
+                            'flight_id': flight_id,
+                            'is_anomaly': metadata.get('is_anomaly', False),
+                            'confidence_score': 0,
+                            'triggers': []
+                        }
+                    }
+                else:
+                    full_report = report_row['full_report']
+                    anomaly_report = json.loads(full_report) if isinstance(full_report, str) else full_report
+                
+                return {
+                    'flight_id': flight_id,
+                    'flight_data': flight_data,
+                    'metadata': metadata,
+                    'anomaly_report': anomaly_report
+                }
+                
+    except Exception as e:
+        logger.error(f"Error fetching data for flight {flight_id}: {e}")
+        return None
+
+
+def fetch_flights_in_date_range(
+    start_date: str,
+    end_date: str,
+    schema: str = 'research',
+    limit: int = 100
+) -> List[str]:
+    """
+    Fetch flight IDs of anomalies within a date range.
+    
+    Args:
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+        schema: Database schema
+        limit: Maximum number of flights to fetch
+    
+    Returns:
+        List of flight IDs
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT ar.flight_id
+                    FROM {schema}.anomaly_reports ar
+                    LEFT JOIN {schema}.ai_classifications ac ON ar.flight_id = ac.flight_id
+                    WHERE ar.is_anomaly = TRUE
+                    AND ar.timestamp >= EXTRACT(EPOCH FROM %s::timestamp)
+                    AND ar.timestamp <= EXTRACT(EPOCH FROM %s::timestamp)
+                    AND ac.flight_id IS NULL
+                    ORDER BY ar.timestamp DESC
+                    LIMIT %s
+                """, (start_date, end_date, limit))
+                
+                flight_ids = [row[0] for row in cursor.fetchall()]
+                logger.info(f"Found {len(flight_ids)} unclassified anomalies in {schema} schema for date range {start_date} to {end_date}")
+                return flight_ids
+                
+    except Exception as e:
+        logger.error(f"Error fetching flights in date range: {e}")
+        return []
